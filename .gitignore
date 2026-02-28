@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Build outputs
+.next/
+out/
+dist/
+build/
+*.egg-info/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Storage
+storage/uploads/*
+storage/stems/*
+storage/clicks/*
+storage/waveforms/*
+storage/*/
+!storage/uploads/.gitkeep
+!storage/stems/.gitkeep
+!storage/clicks/.gitkeep
+!storage/waveforms/.gitkeep
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Models (large files)
+models/
+*.pt
+*.pth
+
+# Logs
+*.log
+celerybeat-schedule
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/

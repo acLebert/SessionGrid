@@ -1,0 +1,95 @@
+services:
+  # ─── PostgreSQL ──────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sessiongrid
+      POSTGRES_PASSWORD: sessiongrid
+      POSTGRES_DB: sessiongrid
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sessiongrid"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ─── Redis ───────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ─── FastAPI Backend ─────────────────────────────────────────────────
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      PYTHONPATH: /app
+      DATABASE_URL: postgresql+asyncpg://sessiongrid:sessiongrid@postgres:5432/sessiongrid
+      DATABASE_URL_SYNC: postgresql://sessiongrid:sessiongrid@postgres:5432/sessiongrid
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /app/storage
+      CORS_ORIGINS: http://localhost:3000
+      DEBUG: "true"
+    volumes:
+      - ./storage:/app/storage
+      - ./apps/api:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ─── Celery Worker ──────────────────────────────────────────────────
+  worker:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    environment:
+      PYTHONPATH: /app
+      DATABASE_URL: postgresql+asyncpg://sessiongrid:sessiongrid@postgres:5432/sessiongrid
+      DATABASE_URL_SYNC: postgresql://sessiongrid:sessiongrid@postgres:5432/sessiongrid
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /app/storage
+      DEBUG: "true"
+    volumes:
+      - ./storage:/app/storage
+      - ./apps/api:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A workers.celery_app worker --loglevel=info --concurrency=1
+
+  # ─── Next.js Frontend ───────────────────────────────────────────────
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    volumes:
+      - ./apps/web:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - api
+    command: npm run dev
+
+volumes:
+  pgdata:

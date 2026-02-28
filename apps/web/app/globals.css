@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #09090b;
+    --foreground: #fafafa;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply rounded-3xl border border-white/10 bg-white/5 shadow-xl backdrop-blur;
+  }
+
+  .glass-panel-hover {
+    @apply glass-panel transition-colors hover:bg-white/[0.07];
+  }
+
+  .btn-primary {
+    @apply rounded-2xl bg-cyan-400 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-cyan-300;
+  }
+
+  .btn-secondary {
+    @apply rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-zinc-100 transition-colors hover:bg-white/15;
+  }
+
+  .btn-ghost {
+    @apply rounded-2xl bg-zinc-900 px-4 py-2 text-sm text-zinc-200 transition-colors hover:bg-zinc-800;
+  }
+
+  .confidence-high {
+    @apply rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-1 text-xs font-medium text-emerald-300;
+  }
+
+  .confidence-medium {
+    @apply rounded-full border border-amber-500/30 bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-300;
+  }
+
+  .confidence-low {
+    @apply rounded-full border border-rose-500/30 bg-rose-500/15 px-2 py-1 text-xs font-medium text-rose-300;
+  }
+
+  .stat-card {
+    @apply rounded-2xl bg-zinc-950/80 p-4;
+  }
+}
+
+@layer utilities {
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}

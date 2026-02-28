@@ -1,0 +1,27 @@
+# FastAPI Backend Dependencies
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.18
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+psycopg2-binary==2.9.10
+alembic==1.14.0
+celery[redis]==5.4.0
+redis==5.2.1
+pydantic==2.10.3
+pydantic-settings==2.7.0
+python-dotenv==1.0.1
+
+# Audio Processing
+demucs==4.0.1
+librosa==0.10.2.post1
+madmom @ git+https://github.com/CPJKU/madmom.git@main
+soundfile==0.12.1
+numpy==1.26.4
+scipy==1.14.1
+torch==2.2.2
+torchaudio==2.2.2
+
+# Utilities
+httpx==0.28.1
+orjson==3.10.12
