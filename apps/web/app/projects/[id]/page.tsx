@@ -29,6 +29,7 @@ import { ArrangementMap } from "@/components/analysis/ArrangementMap";
 import { ExportPanel } from "@/components/analysis/ExportPanel";
 import { ProcessingView } from "@/components/analysis/ProcessingView";
 import { RhythmDebugPanel } from "@/components/analysis/RhythmDebugPanel"; // DEBUG ONLY
+import SubdivisionGraphPanel from "@/components/analysis/SubdivisionGraphPanel"; // DEBUG ONLY
 
 /* ─── Constants ───────────────────────────────────────────────────── */
 
@@ -685,6 +686,7 @@ function DAWContent({
               )}
               {/* DEBUG ONLY — Rhythm Engine Debug Panel */}
               <RhythmDebugPanel projectId={project.id} />
+              <SubdivisionGraphPanel projectId={project.id} />
             </div>
           </aside>
         )}

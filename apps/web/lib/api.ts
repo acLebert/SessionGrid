@@ -129,3 +129,13 @@ export async function getRhythmDebug(
 ): Promise<RhythmDebugData> {
   return request<RhythmDebugData>(`/api/projects/${projectId}/rhythm-debug`);
 }
+
+/* ─── Subdivision Graph Debug (DEBUG ONLY) ─────────────────────────────── */
+
+export async function getSubdivisionDebug(
+  projectId: string
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(
+    `/api/projects/${projectId}/subdivision-debug`
+  );
+}

@@ -233,6 +233,9 @@ def analyze_project(self, project_id: str):
             # v2: Metrical inference (debug)
             metrical_inference_json=results.get("metrical_inference"),
 
+            # v2: Subdivision graph (debug)
+            subdivision_graph_json=results.get("subdivision_graph"),
+
             output_hash_sha256=output_hash,
             analysis_duration_ms=elapsed_ms,
         )

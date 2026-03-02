@@ -426,6 +426,25 @@ async def get_rhythm_debug(project_id: UUID, db: AsyncSession = Depends(get_db))
     })
 
 
+# ─── v2: Subdivision Graph Debug (DEBUG ONLY) ─────────────────────────
+
+@app.get("/api/projects/{project_id}/subdivision-debug")
+async def get_subdivision_debug(project_id: UUID, db: AsyncSession = Depends(get_db)):
+    """DEBUG ONLY — Return raw subdivision graph JSON."""
+    result = await db.execute(
+        select(AnalysisResult).filter(AnalysisResult.project_id == project_id)
+    )
+    analysis = result.scalar_one_or_none()
+
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not analysis.subdivision_graph_json:
+        return JSONResponse(content={"error": "Subdivision graph not available"})
+
+    return JSONResponse(content=analysis.subdivision_graph_json)
+
+
 @app.get("/api/projects/{project_id}/audio")
 async def get_audio(project_id: UUID, db: AsyncSession = Depends(get_db)):
     """Stream the original extracted audio."""

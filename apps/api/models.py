@@ -118,6 +118,9 @@ class AnalysisResult(Base):
     # v2: Metrical inference (DEBUG)
     metrical_inference_json = Column(JSON, nullable=True)  # Full InferenceResult dict
 
+    # v2: Subdivision graph (DEBUG)
+    subdivision_graph_json = Column(JSON, nullable=True)  # Full RhythmGraph dict
+
     # Validation
     output_hash_sha256 = Column(String(64), nullable=True)
     analysis_duration_ms = Column(Integer, nullable=True)
