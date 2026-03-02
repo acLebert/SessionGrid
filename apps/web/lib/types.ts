@@ -89,11 +89,14 @@ export interface WaveformData {
 
 /* ─── Playback Mode ───────────────────────────────────────────────────── */
 
-export type PlaybackMode = "mix" | "drums" | "click" | "click_drums";
+export type PlaybackMode = "mix" | "drums" | "click" | "click_drums" | "vocals" | "bass" | "other";
 
 export const PLAYBACK_MODES: { key: PlaybackMode; label: string }[] = [
   { key: "mix", label: "Original Mix" },
-  { key: "drums", label: "Drum Stem" },
+  { key: "vocals", label: "Vocals" },
+  { key: "drums", label: "Drums" },
+  { key: "bass", label: "Bass" },
+  { key: "other", label: "Other" },
   { key: "click", label: "Click Only" },
   { key: "click_drums", label: "Click + Drums" },
 ];

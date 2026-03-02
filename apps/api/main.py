@@ -250,13 +250,180 @@ async def get_click_track(project_id: UUID, db: AsyncSession = Depends(get_db)):
 @app.get("/api/projects/{project_id}/waveform")
 async def get_waveform(project_id: UUID, stem: str = "mix"):
     """Get waveform peaks data for frontend rendering."""
-    suffix = "_drums" if stem == "drums" else ""
+    suffix = f"_{stem}" if stem != "mix" else ""
     waveform_path = Path(settings.storage_root) / str(project_id) / f"waveform{suffix}.json"
     
     if not waveform_path.exists():
         raise HTTPException(status_code=404, detail="Waveform data not found")
     
     return FileResponse(waveform_path, media_type="application/json")
+
+
+# ─── v2: MIDI Export ──────────────────────────────────────────────────────
+
+@app.get("/api/projects/{project_id}/midi")
+async def get_midi(project_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Download the MIDI file."""
+    result = await db.execute(
+        select(AnalysisResult).filter(AnalysisResult.project_id == project_id)
+    )
+    analysis = result.scalar_one_or_none()
+
+    if not analysis or not analysis.midi_file_path or not Path(analysis.midi_file_path).exists():
+        raise HTTPException(status_code=404, detail="MIDI file not found")
+
+    return FileResponse(
+        analysis.midi_file_path,
+        media_type="audio/midi",
+        filename="drums.mid",
+    )
+
+
+@app.post("/api/projects/{project_id}/midi/quantize")
+async def export_quantized_midi(
+    project_id: UUID,
+    quantization_strength: float = 0.5,
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-export MIDI with a specific quantization strength (0–1)."""
+    result = await db.execute(
+        select(AnalysisResult).filter(AnalysisResult.project_id == project_id)
+    )
+    analysis = result.scalar_one_or_none()
+
+    if not analysis or not analysis.drum_hits_json:
+        raise HTTPException(status_code=404, detail="Drum hits not found")
+
+    from engine.stages.export import export_midi
+
+    project_dir = Path(settings.storage_root) / str(project_id)
+    q_pct = int(quantization_strength * 100)
+    output_path = str(project_dir / f"drums_q{q_pct}.mid")
+
+    midi_result = export_midi(
+        hits=analysis.drum_hits_json,
+        tempo_curve=analysis.tempo_curve_json or [],
+        time_signature=analysis.time_signature or "4/4",
+        sections=[],
+        output_path=output_path,
+        quantization_strength=max(0.0, min(1.0, quantization_strength)),
+        swing_ratio=analysis.swing_ratio or 0.5,
+        beat_times=analysis.beats_json,
+    )
+
+    return FileResponse(
+        midi_result["file_path"],
+        media_type="audio/midi",
+        filename=f"drums_q{q_pct}.mid",
+    )
+
+
+# ─── v2: Drum Hits API ───────────────────────────────────────────────────
+
+@app.get("/api/projects/{project_id}/drum-hits")
+async def get_drum_hits(project_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Get classified drum hits."""
+    result = await db.execute(
+        select(AnalysisResult).filter(AnalysisResult.project_id == project_id)
+    )
+    analysis = result.scalar_one_or_none()
+
+    if not analysis or not analysis.drum_hits_json:
+        raise HTTPException(status_code=404, detail="Drum hits not found")
+
+    return JSONResponse(content={
+        "hits": analysis.drum_hits_json,
+        "num_hits": analysis.num_drum_hits,
+        "groove": analysis.groove_profile_json,
+    })
+
+
+# ─── v2: Groove Profile API ──────────────────────────────────────────────
+
+@app.get("/api/projects/{project_id}/groove")
+async def get_groove(project_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Get groove analysis profile."""
+    result = await db.execute(
+        select(AnalysisResult).filter(AnalysisResult.project_id == project_id)
+    )
+    analysis = result.scalar_one_or_none()
+
+    if not analysis or not analysis.groove_profile_json:
+        raise HTTPException(status_code=404, detail="Groove profile not found")
+
+    return JSONResponse(content=analysis.groove_profile_json)
+
+
+# ─── v2: Confidence Vector API ───────────────────────────────────────────
+
+@app.get("/api/projects/{project_id}/confidence")
+async def get_confidence(project_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Get continuous confidence vector."""
+    result = await db.execute(
+        select(AnalysisResult).filter(AnalysisResult.project_id == project_id)
+    )
+    analysis = result.scalar_one_or_none()
+
+    if not analysis or not analysis.confidence_vector_json:
+        raise HTTPException(status_code=404, detail="Confidence data not found")
+
+    return JSONResponse(content=analysis.confidence_vector_json)
+
+
+# ─── v2: Rhythm Debug (DEBUG ONLY) ────────────────────────────────────
+
+@app.get("/api/projects/{project_id}/rhythm-debug")
+async def get_rhythm_debug(project_id: UUID, db: AsyncSession = Depends(get_db)):
+    """DEBUG ONLY — Return summarised metrical inference results."""
+    result = await db.execute(
+        select(AnalysisResult).filter(AnalysisResult.project_id == project_id)
+    )
+    analysis = result.scalar_one_or_none()
+
+    if not analysis or not analysis.metrical_inference_json:
+        raise HTTPException(status_code=404, detail="Metrical inference data not found")
+
+    mi = analysis.metrical_inference_json
+    windows = mi.get("window_inferences", [])
+    modulations = mi.get("detected_modulations", [])
+    polyrhythms = mi.get("persistent_polyrhythms", [])
+
+    # Unique dominant meters
+    unique_meters = set()
+    confidences = []
+    ambiguous_count = 0
+
+    for w in windows:
+        dom = w.get("dominant_hypothesis")
+        if dom:
+            bc = dom.get("beat_count", 0)
+            unique_meters.add(f"{bc}/4")
+            confidences.append(dom.get("confidence", 0.0))
+        if w.get("ambiguity_flag"):
+            ambiguous_count += 1
+
+    # Sample first 10 windows
+    sample_windows = []
+    for w in windows[:10]:
+        dom = w.get("dominant_hypothesis")
+        sample_windows.append({
+            "start_time": round(w.get("start_time", 0), 2),
+            "end_time": round(w.get("end_time", 0), 2),
+            "beat_count": dom.get("beat_count") if dom else None,
+            "grouping": dom.get("grouping_vector") if dom else None,
+            "confidence": round(dom.get("confidence", 0), 4) if dom else None,
+        })
+
+    return JSONResponse(content={
+        "unique_meters": sorted(unique_meters),
+        "confidence_min": round(min(confidences), 4) if confidences else None,
+        "confidence_max": round(max(confidences), 4) if confidences else None,
+        "modulation_count": len(modulations),
+        "polyrhythm_count": len(polyrhythms),
+        "ambiguous_window_count": ambiguous_count,
+        "total_windows": len(windows),
+        "sample_windows": sample_windows,
+    })
 
 
 @app.get("/api/projects/{project_id}/audio")

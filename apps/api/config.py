@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     demucs_model: str = "htdemucs"
     sample_rate: int = 44100
     random_seed: int = 42
-    pipeline_version: str = "0.1.0"
+    pipeline_version: str = "2.0.0"
 
     # CORS
     cors_origins: str = "http://localhost:3000"

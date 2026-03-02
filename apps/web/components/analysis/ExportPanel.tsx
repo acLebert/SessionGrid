@@ -22,39 +22,30 @@ export function ExportPanel({ projectId }: ExportPanelProps) {
       case "json":
         return getExportJsonUrl(projectId);
       default:
-        return null; // PDF and MIDI coming in v0.2
+        return null;
     }
   }
 
   return (
-    <div className="glass-panel p-5">
-      <h2 className="text-lg font-semibold">Exports</h2>
-      <div className="mt-4 grid gap-3 text-sm">
-        {EXPORTS.map(({ label, type }) => {
-          const url = getUrl(type);
-          const isAvailable = !!url;
+    <div className="space-y-1.5">
+      {EXPORTS.map(({ label, type }) => {
+        const url = getUrl(type);
+        const isAvailable = !!url;
 
-          return isAvailable ? (
-            <a
-              key={type}
-              href={url}
-              download
-              className="flex items-center justify-between rounded-2xl border border-white/10 bg-zinc-900/70 px-4 py-3 text-zinc-200 transition-colors hover:bg-zinc-900"
-            >
-              {label}
-              <Download className="h-4 w-4 text-zinc-500" />
-            </a>
-          ) : (
-            <div
-              key={type}
-              className="flex items-center justify-between rounded-2xl border border-white/5 bg-zinc-900/40 px-4 py-3 text-zinc-500"
-            >
-              {label}
-              <span className="text-xs">Coming soon</span>
-            </div>
-          );
-        })}
-      </div>
+        return isAvailable ? (
+          <a key={type} href={url} download className="daw-export-item">
+            {label}
+            <Download className="h-3.5 w-3.5 text-[#5c5c66]" />
+          </a>
+        ) : (
+          <div key={type} className="daw-export-item opacity-40">
+            {label}
+            <span className="text-[10px] uppercase tracking-wider text-[#5c5c66]">
+              Soon
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }

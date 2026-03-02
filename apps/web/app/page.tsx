@@ -2,7 +2,16 @@
 
 import React, { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, Music, ChevronRight, Headphones } from "lucide-react";
+import {
+  Upload,
+  Music,
+  ChevronRight,
+  Headphones,
+  Layers,
+  Activity,
+  MousePointerClick,
+  FolderOpen,
+} from "lucide-react";
 import { createProject, triggerAnalysis } from "@/lib/api";
 
 const ALLOWED = new Set([
@@ -56,55 +65,57 @@ export default function HomePage() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950">
-      {/* Header */}
-      <header className="border-b border-white/5">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-cyan-400/15">
-              <Headphones className="h-5 w-5 text-cyan-400" />
+    <div className="flex min-h-screen flex-col bg-[#111114]">
+      {/* ─── Top Bar ────────────────────────────────────────────── */}
+      <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-[#111114]/90 glass">
+        <div className="mx-auto flex max-w-5xl items-center justify-between px-5 py-3 tablet:px-8">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-muted">
+              <Headphones className="h-5 w-5 text-accent" />
             </div>
-            <span className="text-lg font-semibold tracking-tight">SessionGrid</span>
+            <span className="text-lg font-semibold tracking-tight">
+              SessionGrid
+            </span>
           </div>
           <a
             href="/projects"
-            className="text-sm text-zinc-400 transition-colors hover:text-zinc-200"
+            className="btn-ghost text-sm"
           >
-            My Projects <ChevronRight className="ml-1 inline h-3 w-3" />
+            <FolderOpen className="h-4 w-4" />
+            My Projects
+            <ChevronRight className="h-3.5 w-3.5 text-text-muted" />
           </a>
         </div>
       </header>
 
-      {/* Hero */}
-      <main className="mx-auto max-w-5xl px-6 py-16">
-        <div className="text-center">
-          <p className="text-sm uppercase tracking-[0.3em] text-cyan-400">
-            Rehearsal Translator
-          </p>
-          <h1 className="mt-3 text-4xl font-bold tracking-tight md:text-5xl">
+      {/* ─── Hero ───────────────────────────────────────────────── */}
+      <main className="flex flex-1 flex-col items-center px-5 pb-10 pt-10 tablet:px-8 tablet:pt-16">
+        <div className="w-full max-w-2xl text-center">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-muted px-3 py-1 text-xs font-medium text-accent-hover">
+            <Activity className="h-3 w-3" /> Rehearsal Translator
+          </span>
+          <h1 className="mt-4 text-3xl font-bold tracking-tight tablet:text-4xl">
             Turn demos into
             <br />
-            <span className="bg-gradient-to-r from-cyan-400 to-teal-400 bg-clip-text text-transparent">
-              arrangement maps
-            </span>
+            <span className="text-gradient">arrangement maps</span>
           </h1>
-          <p className="mx-auto mt-4 max-w-xl text-lg text-zinc-400">
+          <p className="mx-auto mt-3 max-w-md text-base text-text-secondary tablet:text-lg">
             Upload a song, isolate the drums, analyze tempo and structure, and
-            get a rehearsal-ready guide with click track support.
+            get a rehearsal-ready guide.
           </p>
         </div>
 
-        {/* Upload Card */}
-        <div className="mx-auto mt-12 max-w-2xl">
-          <div className="glass-panel p-6">
+        {/* ─── Upload Card ──────────────────────────────────────── */}
+        <div className="mt-10 w-full max-w-2xl animate-fade-up">
+          <div className="card p-5 tablet:p-6">
             {/* Drop Zone */}
             <div
-              className={`relative flex flex-col items-center justify-center rounded-2xl border-2 border-dashed p-12 transition-colors ${
+              className={`relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-10 transition-all tablet:p-14 ${
                 dragging
-                  ? "border-cyan-400 bg-cyan-400/5"
+                  ? "border-accent bg-accent-muted"
                   : selectedFile
-                  ? "border-emerald-500/30 bg-emerald-500/5"
-                  : "border-white/15 bg-zinc-900/50 hover:border-white/25"
+                  ? "border-emerald-500/30 bg-emerald-500/[0.06]"
+                  : "border-white/10 bg-surface hover:border-white/20"
               }`}
               onDragOver={(e) => {
                 e.preventDefault();
@@ -115,9 +126,11 @@ export default function HomePage() {
             >
               {selectedFile ? (
                 <>
-                  <Music className="h-10 w-10 text-emerald-400" />
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/10">
+                    <Music className="h-7 w-7 text-emerald-400" />
+                  </div>
                   <p className="mt-3 font-medium">{selectedFile.name}</p>
-                  <p className="mt-1 text-sm text-zinc-400">
+                  <p className="mt-1 text-sm text-text-secondary">
                     {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
                   </p>
                   <button
@@ -125,21 +138,24 @@ export default function HomePage() {
                       setSelectedFile(null);
                       setProjectName("");
                     }}
-                    className="mt-3 text-sm text-zinc-500 hover:text-zinc-300"
+                    className="btn-ghost mt-3 text-sm text-text-muted"
                   >
                     Remove
                   </button>
                 </>
               ) : (
                 <>
-                  <Upload className="h-10 w-10 text-zinc-500" />
-                  <p className="mt-3 text-zinc-300">
-                    Drop your audio or video file here
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-raised">
+                    <Upload className="h-7 w-7 text-text-muted" />
+                  </div>
+                  <p className="mt-3 font-medium text-text-primary">
+                    Drop audio or video here
                   </p>
-                  <p className="mt-1 text-sm text-zinc-500">
+                  <p className="mt-1 text-sm text-text-muted">
                     MP3, WAV, FLAC, MP4, MOV — up to 200 MB
                   </p>
-                  <label className="btn-secondary mt-4 cursor-pointer">
+                  <label className="btn-secondary mt-5 cursor-pointer">
+                    <MousePointerClick className="h-4 w-4" />
                     Browse Files
                     <input
                       type="file"
@@ -155,35 +171,35 @@ export default function HomePage() {
               )}
             </div>
 
-            {/* Project Name */}
+            {/* ── Project Name + Submit ───────────────────────── */}
             {selectedFile && (
-              <div className="mt-5 animate-fade-in space-y-4">
+              <div className="mt-5 animate-fade-up space-y-4">
                 <div>
-                  <label className="mb-1.5 block text-sm text-zinc-400">
+                  <label className="mb-1.5 block text-sm font-medium text-text-secondary">
                     Project name
                   </label>
                   <input
                     type="text"
                     value={projectName}
                     onChange={(e) => setProjectName(e.target.value)}
-                    className="w-full rounded-xl border border-white/10 bg-zinc-900 px-4 py-2.5 text-sm text-zinc-100 outline-none transition-colors focus:border-cyan-400/50"
+                    className="input"
                     placeholder="My Demo"
                   />
                 </div>
 
                 {/* Rights Confirmation */}
-                <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 bg-zinc-900/70 p-4">
+                <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.06] bg-surface p-4 transition-colors active:bg-surface-raised">
                   <input
                     type="checkbox"
                     checked={rightsConfirmed}
                     onChange={(e) => setRightsConfirmed(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded border-white/20 bg-zinc-800 accent-cyan-400"
+                    className="mt-0.5 h-5 w-5 rounded border-white/20 bg-surface-raised accent-accent"
                   />
                   <div className="text-sm">
-                    <p className="font-medium text-zinc-200">
+                    <p className="font-medium text-text-primary">
                       I have rights to this audio
                     </p>
-                    <p className="mt-0.5 text-zinc-500">
+                    <p className="mt-0.5 text-text-muted">
                       This is my own music, a demo I&apos;ve been given
                       permission to use, or material I have license to analyze.
                     </p>
@@ -192,7 +208,7 @@ export default function HomePage() {
 
                 {/* Error */}
                 {error && (
-                  <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-300">
+                  <div className="rounded-xl border border-rose-500/25 bg-rose-500/10 p-3 text-sm text-rose-300">
                     {error}
                   </div>
                 )}
@@ -201,12 +217,12 @@ export default function HomePage() {
                 <button
                   onClick={handleSubmit}
                   disabled={!rightsConfirmed || !projectName || uploading}
-                  className="btn-primary w-full py-3 text-base disabled:cursor-not-allowed disabled:opacity-50"
+                  className="btn-primary w-full py-3.5 text-base"
                 >
                   {uploading ? (
                     <span className="flex items-center justify-center gap-2">
-                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-950 border-t-transparent" />
-                      Uploading & starting analysis...
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                      Uploading & analyzing...
                     </span>
                   ) : (
                     "Upload & Analyze"
@@ -215,51 +231,61 @@ export default function HomePage() {
               </div>
             )}
           </div>
+        </div>
 
-          {/* Features */}
-          <div className="mt-8 grid gap-4 md:grid-cols-3">
+        {/* ─── Features ─────────────────────────────────────────── */}
+        <div className="mt-10 w-full max-w-2xl">
+          <div className="grid gap-3 tablet:grid-cols-3">
             {[
               {
+                icon: Layers,
                 title: "Stem Isolation",
                 desc: "AI-powered drum separation using Demucs v4",
               },
               {
+                icon: Activity,
                 title: "Beat Analysis",
                 desc: "Tempo, meter, and section detection with confidence scoring",
               },
               {
+                icon: Headphones,
                 title: "Click Track",
                 desc: "Auto-generated click aligned to the real beat grid",
               },
             ].map((feature) => (
               <div
                 key={feature.title}
-                className="rounded-2xl border border-white/5 bg-white/[0.02] p-5"
+                className="card flex items-start gap-3 p-4"
               >
-                <h3 className="text-sm font-semibold">{feature.title}</h3>
-                <p className="mt-1 text-sm text-zinc-500">{feature.desc}</p>
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-muted">
+                  <feature.icon className="h-4 w-4 text-accent" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold">{feature.title}</h3>
+                  <p className="mt-0.5 text-sm text-text-muted">{feature.desc}</p>
+                </div>
               </div>
             ))}
           </div>
 
-          {/* How It Works */}
-          <div className="mt-10 rounded-2xl border border-white/5 bg-white/[0.02] p-6">
-            <h3 className="text-center text-sm font-semibold uppercase tracking-widest text-zinc-400">
+          {/* ── How It Works ──────────────────────────────────── */}
+          <div className="mt-6 card p-5 tablet:p-6">
+            <h3 className="text-center text-xs font-semibold uppercase tracking-[0.2em] text-text-muted">
               How it works
             </h3>
-            <div className="mt-5 grid gap-6 md:grid-cols-4">
+            <div className="mt-5 grid grid-cols-2 gap-5 tablet:grid-cols-4">
               {[
-                { step: "1", title: "Upload", desc: "Drop any audio or video file — MP3, WAV, FLAC, MP4, etc." },
-                { step: "2", title: "Analyze", desc: "SessionGrid extracts audio, separates stems, and maps the arrangement." },
-                { step: "3", title: "Explore", desc: "Browse sections, loop parts, switch between mix/drums/click." },
-                { step: "4", title: "Rehearse", desc: "Use the Practice Deck to slow down, count in, and nail the part." },
+                { step: "1", title: "Upload", desc: "Drop any audio or video file" },
+                { step: "2", title: "Analyze", desc: "Stems separated, beats mapped" },
+                { step: "3", title: "Explore", desc: "Browse sections, loop parts" },
+                { step: "4", title: "Rehearse", desc: "Slow down, count in, nail it" },
               ].map((item) => (
                 <div key={item.step} className="text-center">
-                  <div className="mx-auto flex h-8 w-8 items-center justify-center rounded-full bg-cyan-400/15 text-sm font-bold text-cyan-400">
+                  <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-full bg-accent-muted text-sm font-bold text-accent">
                     {item.step}
                   </div>
                   <p className="mt-2 text-sm font-medium">{item.title}</p>
-                  <p className="mt-1 text-xs text-zinc-500">{item.desc}</p>
+                  <p className="mt-0.5 text-xs text-text-muted">{item.desc}</p>
                 </div>
               ))}
             </div>

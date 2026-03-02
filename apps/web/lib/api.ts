@@ -104,3 +104,28 @@ export async function updateSection(
 export function getExportJsonUrl(projectId: string): string {
   return `${API_BASE}/api/projects/${projectId}/export/json`;
 }
+
+/* ─── Rhythm Debug (DEBUG ONLY) ───────────────────────────────────────── */
+
+export interface RhythmDebugData {
+  unique_meters: string[];
+  confidence_min: number | null;
+  confidence_max: number | null;
+  modulation_count: number;
+  polyrhythm_count: number;
+  ambiguous_window_count: number;
+  total_windows: number;
+  sample_windows: {
+    start_time: number;
+    end_time: number;
+    beat_count: number | null;
+    grouping: number[] | null;
+    confidence: number | null;
+  }[];
+}
+
+export async function getRhythmDebug(
+  projectId: string
+): Promise<RhythmDebugData> {
+  return request<RhythmDebugData>(`/api/projects/${projectId}/rhythm-debug`);
+}

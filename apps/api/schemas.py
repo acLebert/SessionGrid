@@ -72,8 +72,32 @@ class AnalysisResultOut(BaseModel):
     confidence_sections: Optional[str] = None
     beats_json: Optional[list] = None
     downbeats_json: Optional[list] = None
+    onset_times_json: Optional[list] = None
     tempo_curve_json: Optional[list] = None
     analysis_duration_ms: Optional[int] = None
+
+    # v2: Groove
+    groove_profile_json: Optional[dict] = None
+    swing_ratio: Optional[float] = None
+    groove_type: Optional[str] = None
+
+    # v2: Drum hits
+    drum_hits_json: Optional[list] = None
+    num_drum_hits: Optional[int] = None
+
+    # v2: Confidence vector
+    confidence_vector_json: Optional[dict] = None
+
+    # v2: Tempo correction
+    raw_bpm: Optional[float] = None
+    octave_correction_factor: Optional[float] = None
+    tempo_candidates_json: Optional[list] = None
+
+    # v2: MIDI
+    midi_file_path: Optional[str] = None
+
+    # v2: Metrical inference (debug)
+    metrical_inference_json: Optional[dict] = None
 
     class Config:
         from_attributes = True

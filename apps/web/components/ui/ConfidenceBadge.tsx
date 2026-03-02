@@ -7,16 +7,22 @@ interface ConfidenceBadgeProps {
   inline?: boolean;
 }
 
-const STYLES: Record<string, string> = {
+const BADGE_STYLES: Record<string, string> = {
   high: "confidence-high",
   medium: "confidence-medium",
   low: "confidence-low",
 };
 
 const INLINE_STYLES: Record<string, string> = {
-  high: "font-medium text-emerald-300",
-  medium: "font-medium text-amber-300",
-  low: "font-medium text-rose-300",
+  high: "font-medium text-emerald-400",
+  medium: "font-medium text-amber-400",
+  low: "font-medium text-rose-400",
+};
+
+const DOT_STYLES: Record<string, string> = {
+  high: "bg-emerald-400",
+  medium: "bg-amber-400",
+  low: "bg-rose-400",
 };
 
 export function ConfidenceBadge({ level, inline }: ConfidenceBadgeProps) {
@@ -25,14 +31,15 @@ export function ConfidenceBadge({ level, inline }: ConfidenceBadgeProps) {
 
   if (inline) {
     return (
-      <span className={INLINE_STYLES[normalized] || INLINE_STYLES.low}>
+      <span className={`flex items-center gap-1.5 text-sm ${INLINE_STYLES[normalized] || INLINE_STYLES.low}`}>
+        <span className={`h-1.5 w-1.5 rounded-full ${DOT_STYLES[normalized] || DOT_STYLES.low}`} />
         {label}
       </span>
     );
   }
 
   return (
-    <span className={STYLES[normalized] || STYLES.low}>
+    <span className={BADGE_STYLES[normalized] || BADGE_STYLES.low}>
       {label}
     </span>
   );

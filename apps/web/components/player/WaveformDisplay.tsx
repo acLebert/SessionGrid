@@ -19,6 +19,9 @@ interface PeakData {
   rms: number;
 }
 
+/* Accent colors in RGBA for canvas */
+const ACCENT = { r: 139, g: 92, b: 246 }; // #8b5cf6
+
 export function WaveformDisplay({
   projectId,
   sections,
@@ -39,7 +42,6 @@ export function WaveformDisplay({
     getWaveformData(projectId, stem)
       .then(setWaveformData)
       .catch(() => {
-        // Generate placeholder waveform data for initial state
         const fakePeaks: PeakData[] = Array.from({ length: 200 }, () => ({
           min: -(0.1 + Math.random() * 0.6),
           max: 0.1 + Math.random() * 0.6,
@@ -77,11 +79,10 @@ export function WaveformDisplay({
     const centerY = height / 2;
     const { peaks, duration } = waveformData;
 
-    // Clear
     ctx.clearRect(0, 0, width, height);
 
-    // Draw center line
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
+    // Draw thin center line
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.04)";
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, centerY);
@@ -94,13 +95,13 @@ export function WaveformDisplay({
       const ex = (section.end_time / duration) * width;
 
       if (idx === activeSection) {
-        ctx.fillStyle = "rgba(34, 211, 238, 0.06)";
+        ctx.fillStyle = `rgba(${ACCENT.r}, ${ACCENT.g}, ${ACCENT.b}, 0.08)`;
         ctx.fillRect(sx, 0, ex - sx, height);
       }
 
       // Section boundary line
       if (idx > 0) {
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.06)";
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(sx, 0);
@@ -110,50 +111,72 @@ export function WaveformDisplay({
     });
 
     // Draw waveform bars
-    const barWidth = Math.max(1, width / peaks.length - 0.5);
+    const barWidth = Math.max(1.5, width / peaks.length - 1);
+    const gap = Math.max(0.5, (width - barWidth * peaks.length) / peaks.length);
     peaks.forEach((peak, i) => {
-      const x = (i / peaks.length) * width;
+      const x = i * (barWidth + gap);
       const time = (i / peaks.length) * duration;
 
-      // Determine if this peak is in the active section
       const inActive = sections[activeSection] &&
         time >= sections[activeSection].start_time &&
         time <= sections[activeSection].end_time;
 
+      // Played portion is brighter
+      const played = (i / peaks.length) <= playheadPosition;
+
       const maxH = Math.abs(peak.max) * centerY * 0.85;
       const minH = Math.abs(peak.min) * centerY * 0.85;
 
-      ctx.fillStyle = inActive
-        ? "rgba(34, 211, 238, 0.5)"
-        : "rgba(34, 211, 238, 0.2)";
+      if (inActive) {
+        ctx.fillStyle = played
+          ? `rgba(${ACCENT.r}, ${ACCENT.g}, ${ACCENT.b}, 0.75)`
+          : `rgba(${ACCENT.r}, ${ACCENT.g}, ${ACCENT.b}, 0.4)`;
+      } else {
+        ctx.fillStyle = played
+          ? "rgba(255, 255, 255, 0.35)"
+          : "rgba(255, 255, 255, 0.12)";
+      }
 
-      // Draw symmetric bar
-      ctx.fillRect(x, centerY - maxH, barWidth, maxH);
-      ctx.fillRect(x, centerY, barWidth, minH);
+      // Draw rounded bars
+      const radius = barWidth / 2;
+      // Top bar
+      ctx.beginPath();
+      ctx.roundRect(x, centerY - maxH, barWidth, maxH, [radius, radius, 0, 0]);
+      ctx.fill();
+      // Bottom bar
+      ctx.beginPath();
+      ctx.roundRect(x, centerY, barWidth, minH, [0, 0, radius, radius]);
+      ctx.fill();
     });
 
     // Draw playhead
     const playheadX = playheadPosition * width;
-    ctx.strokeStyle = "rgba(34, 211, 238, 1)";
+    ctx.strokeStyle = `rgba(${ACCENT.r}, ${ACCENT.g}, ${ACCENT.b}, 1)`;
     ctx.lineWidth = 2;
-    ctx.shadowColor = "rgba(34, 211, 238, 0.65)";
-    ctx.shadowBlur = 24;
+    ctx.shadowColor = `rgba(${ACCENT.r}, ${ACCENT.g}, ${ACCENT.b}, 0.6)`;
+    ctx.shadowBlur = 16;
     ctx.beginPath();
     ctx.moveTo(playheadX, 0);
     ctx.lineTo(playheadX, height);
     ctx.stroke();
     ctx.shadowBlur = 0;
+
+    // Playhead dot
+    ctx.fillStyle = `rgba(${ACCENT.r}, ${ACCENT.g}, ${ACCENT.b}, 1)`;
+    ctx.beginPath();
+    ctx.arc(playheadX, 4, 4, 0, Math.PI * 2);
+    ctx.fill();
   }, [waveformData, sections, activeSection, playheadPosition]);
 
   // Handle click on waveform to seek audio and select section
-  const handleClick = (e: React.MouseEvent) => {
+  const handleClick = (e: React.MouseEvent | React.TouchEvent) => {
     const container = containerRef.current;
     if (!container) return;
     const rect = container.getBoundingClientRect();
-    const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const clientX = "touches" in e ? e.changedTouches[0].clientX : e.clientX;
+    const fraction = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     audio.seekFraction(fraction);
 
-    // Auto-detect which section was clicked
     if (onSectionSelect && audio.duration > 0) {
       const clickedTime = fraction * audio.duration;
       const idx = sections.findIndex(
@@ -164,16 +187,16 @@ export function WaveformDisplay({
   };
 
   return (
-    <div className="relative">
-      {/* Section labels */}
-      <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1 text-xs font-medium scrollbar-none">
+    <div className="relative touch-pan-y">
+      {/* Section labels — horizontally scrollable on tablet */}
+      <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1 scrollbar-none snap-x-mandatory">
         {sections.map((section, idx) => (
           <span
             key={section.id}
-            className={`flex-shrink-0 rounded-full px-2.5 py-1 ${
+            className={`snap-start ${
               idx === activeSection
-                ? "bg-cyan-400/20 text-cyan-200"
-                : "bg-zinc-800/90 text-zinc-400"
+                ? "section-pill-active"
+                : "section-pill-inactive"
             }`}
           >
             {section.name.length > 12
@@ -186,8 +209,9 @@ export function WaveformDisplay({
       {/* Waveform canvas */}
       <div
         ref={containerRef}
-        className="relative h-40 cursor-crosshair overflow-hidden rounded-2xl bg-gradient-to-b from-zinc-800 to-zinc-950"
+        className="relative h-32 cursor-crosshair overflow-hidden rounded-xl bg-gradient-to-b from-surface-raised to-surface tablet:h-40"
         onClick={handleClick}
+        onTouchEnd={handleClick}
       >
         <canvas ref={canvasRef} className="absolute inset-0" />
       </div>

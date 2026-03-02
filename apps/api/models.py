@@ -92,7 +92,31 @@ class AnalysisResult(Base):
     # Raw analysis data
     beats_json = Column(JSON, nullable=True)       # Array of beat timestamps in seconds
     downbeats_json = Column(JSON, nullable=True)    # Array of downbeat timestamps in seconds
+    onset_times_json = Column(JSON, nullable=True)  # Array of onset timestamps (sample-level)
     tempo_curve_json = Column(JSON, nullable=True)  # Array of {time, bpm} for tempo changes
+
+    # v2: Groove modeling
+    groove_profile_json = Column(JSON, nullable=True)   # Full GrooveProfile dict
+    swing_ratio = Column(Float, nullable=True)          # Mean swing ratio
+    groove_type = Column(String(50), nullable=True)     # straight|swing|shuffle|…
+
+    # v2: Drum hits
+    drum_hits_json = Column(JSON, nullable=True)       # Array of DrumHit dicts
+    num_drum_hits = Column(Integer, nullable=True)
+
+    # v2: Confidence vector (continuous 0–1 scores)
+    confidence_vector_json = Column(JSON, nullable=True)  # Full ConfidenceVector dict
+
+    # v2: Tempo octave correction
+    raw_bpm = Column(Float, nullable=True)              # Before octave correction
+    octave_correction_factor = Column(Float, nullable=True)  # 0.5, 1.0, or 2.0
+    tempo_candidates_json = Column(JSON, nullable=True)  # All scored candidates
+
+    # v2: MIDI export
+    midi_file_path = Column(String(1000), nullable=True)
+
+    # v2: Metrical inference (DEBUG)
+    metrical_inference_json = Column(JSON, nullable=True)  # Full InferenceResult dict
 
     # Validation
     output_hash_sha256 = Column(String(64), nullable=True)

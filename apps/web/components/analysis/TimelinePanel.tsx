@@ -31,24 +31,25 @@ export function TimelinePanel({
   };
 
   return (
-    <div className="glass-panel p-5">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    <div className="card p-4 tablet:p-5">
+      {/* Header row */}
+      <div className="flex flex-col gap-3 tablet:flex-row tablet:items-center tablet:justify-between">
         <div>
-          <p className="text-sm text-zinc-400">Current section</p>
-          <h2 className="text-2xl font-semibold">
+          <p className="text-xs font-medium uppercase tracking-wider text-text-muted">
+            Now playing
+          </p>
+          <h2 className="mt-0.5 text-xl font-semibold tablet:text-2xl">
             {currentSection?.name || "Full Track"}
           </h2>
         </div>
-        <div className="flex flex-wrap gap-2">
+
+        {/* Segmented Control for playback mode */}
+        <div className="segmented-control overflow-x-auto scrollbar-none">
           {PLAYBACK_MODES.map(({ key, label }) => (
             <button
               key={key}
+              data-active={playbackMode === key}
               onClick={() => handleModeChange(key)}
-              className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-                playbackMode === key
-                  ? "bg-cyan-400 text-zinc-950"
-                  : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
-              }`}
             >
               {label}
             </button>
@@ -57,14 +58,12 @@ export function TimelinePanel({
       </div>
 
       {/* Waveform / Timeline */}
-      <div className="mt-6 rounded-[28px] border border-white/10 bg-zinc-900/80 p-5">
-        <div className="mb-4 flex items-center justify-between text-sm text-zinc-400">
+      <div className="mt-5 rounded-xl border border-white/[0.06] bg-surface p-4">
+        <div className="mb-3 flex items-center justify-between text-xs text-text-muted">
           <span>Song timeline</span>
           {currentSection && (
             <span>
-              Loop In{" "}
-              {formatTime(currentSection.start_time)} • Loop Out{" "}
-              {formatTime(currentSection.end_time)}
+              Loop: {formatTime(currentSection.start_time)} → {formatTime(currentSection.end_time)}
             </span>
           )}
         </div>
@@ -79,34 +78,37 @@ export function TimelinePanel({
         />
 
         {/* Stats Row */}
-        <div className="mt-5 grid gap-3 md:grid-cols-4">
+        <div className="mt-4 grid grid-cols-2 gap-2 tablet:grid-cols-4">
           <div className="stat-card">
-            <p className="text-sm text-zinc-400">Tempo</p>
-            <p className="mt-1 text-2xl font-semibold">
-              {currentSection?.bpm || analysis.overall_bpm || "--"} BPM
+            <p className="text-xs text-text-muted">Tempo</p>
+            <p className="mt-1 text-lg font-semibold tablet:text-xl">
+              {currentSection?.bpm || analysis.overall_bpm || "--"}
+              <span className="ml-0.5 text-xs font-normal text-text-muted">BPM</span>
             </p>
           </div>
           <div className="stat-card">
-            <p className="text-sm text-zinc-400">Meter</p>
-            <p className="mt-1 text-2xl font-semibold">
+            <p className="text-xs text-text-muted">Meter</p>
+            <p className="mt-1 text-lg font-semibold tablet:text-xl">
               {currentSection?.meter || analysis.time_signature || "--"}
             </p>
           </div>
           <div className="stat-card">
-            <p className="text-sm text-zinc-400">Bars</p>
-            <p className="mt-1 text-2xl font-semibold">
+            <p className="text-xs text-text-muted">Bars</p>
+            <p className="mt-1 text-lg font-semibold tablet:text-xl">
               {currentSection?.bars || "--"}
             </p>
           </div>
           <div className="stat-card">
-            <p className="text-sm text-zinc-400">Confidence</p>
+            <p className="text-xs text-text-muted">Confidence</p>
             <p
-              className={`mt-1 text-2xl font-semibold ${
+              className={`mt-1 text-lg font-semibold tablet:text-xl ${
                 currentSection?.confidence === "high"
-                  ? "text-emerald-300"
+                  ? "text-emerald-400"
                   : currentSection?.confidence === "medium"
-                  ? "text-amber-300"
-                  : "text-rose-300"
+                  ? "text-amber-400"
+                  : currentSection?.confidence === "low"
+                  ? "text-rose-400"
+                  : "text-text-muted"
               }`}
             >
               {currentSection?.confidence

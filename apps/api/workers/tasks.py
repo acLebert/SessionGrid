@@ -1,8 +1,7 @@
-"""SessionGrid — Celery Task Definitions (Full Analysis Pipeline)"""
+"""SessionGrid — Celery Task Definitions (v2 Engine Pipeline)"""
 
 import logging
 import hashlib
-import time
 import json
 from pathlib import Path
 from datetime import datetime, timezone
@@ -47,95 +46,91 @@ def _update_status(project_id: str, status: ProjectStatus, message: str = None):
 @celery_app.task(bind=True, name="analyze_project")
 def analyze_project(self, project_id: str):
     """
-    Full analysis pipeline task.
-    
-    Steps:
-    1. Extract audio (FFmpeg)
-    2. Separate stems (Demucs)
-    3. Analyze beats (librosa + madmom)
-    4. Detect sections
-    5. Score confidence
-    6. Generate click track
-    7. Generate waveform peaks
-    8. Persist all results
+    Full v2 analysis pipeline task.
+
+    Delegates all analysis to engine.pipeline.run_pipeline() and
+    persists results to the database.
+
+    Stages (handled by engine):
+      1. separation  — Stereo extract + Demucs stem isolation
+      2. signal      — Onset detection + sample-level refinement
+      3. temporal    — Beat tracking, downbeats, tempo octave correction, sections
+      4. groove      — Swing, microtiming, accent profiling
+      5. hits        — Drum hit classification
+      6. export      — MIDI, click track, waveform peaks
+      + confidence   — Metric-vector scoring
+      + versioning   — Manifest, artifact caching
     """
-    start_time = time.time()
-    logger.info(f"Starting analysis pipeline for project: {project_id}")
-    
+    logger.info(f"Starting v2 analysis pipeline for project: {project_id}")
+
     db = _get_db()
-    
+
     try:
         project = db.query(Project).filter(Project.id == project_id).first()
         if not project:
             raise ValueError(f"Project not found: {project_id}")
-        
+
         original_path = project.original_file_path
         project_dir = Path(settings.storage_root) / str(project_id)
         project_dir.mkdir(parents=True, exist_ok=True)
-        
-        # ─── Step 1: Extract Audio ──────────────────────────────────────
-        _update_status(project_id, ProjectStatus.EXTRACTING, "Extracting audio from file...")
-        self.update_state(state="PROGRESS", meta={"step": "extracting", "progress": 10})
-        
-        from services.audio_extract import extract_audio
-        
-        audio_output = str(project_dir / "audio.wav")
-        extract_result = extract_audio(original_path, audio_output)
-        
-        project.audio_file_path = extract_result["output_path"]
-        project.duration_seconds = extract_result["duration_seconds"]
-        project.file_hash_sha256 = extract_result["file_hash_sha256"]
+
+        # Progress callback: updates Celery state + DB status
+        def on_progress(stage: str, pct: int, msg: str = ""):
+            self.update_state(state="PROGRESS", meta={
+                "step": stage, "progress": pct, "message": msg,
+            })
+            # Map stages to DB statuses
+            stage_status_map = {
+                "separation": ProjectStatus.SEPARATING,
+                "signal": ProjectStatus.ANALYZING,
+                "temporal": ProjectStatus.ANALYZING,
+                "groove": ProjectStatus.ANALYZING,
+                "hits": ProjectStatus.ANALYZING,
+                "export": ProjectStatus.GENERATING_CLICK,
+                "confidence": ProjectStatus.ANALYZING,
+            }
+            db_status = stage_status_map.get(stage, ProjectStatus.ANALYZING)
+            _update_status(project_id, db_status, msg)
+
+        # ─── Run the v2 engine pipeline ─────────────────────────────────
+        from engine.pipeline import run_pipeline
+
+        results = run_pipeline(
+            input_file_path=original_path,
+            project_dir=str(project_dir),
+            on_progress=on_progress,
+            force_rerun=False,
+        )
+
+        # ─── Persist results to database ────────────────────────────────
+
+        # Update project metadata
+        extract = results.get("extraction", {})
+        project.audio_file_path = extract.get("mono_path")
+        project.duration_seconds = extract.get("duration_seconds")
+        project.file_hash_sha256 = extract.get("file_hash_sha256")
         db.commit()
-        
-        # ─── Step 2: Separate Stems ─────────────────────────────────────
-        _update_status(project_id, ProjectStatus.SEPARATING, "Separating instrument stems...")
-        self.update_state(state="PROGRESS", meta={"step": "separating", "progress": 30})
-        
-        from services.stem_separate import separate_stems
-        
-        stems_dir = str(project_dir / "stems")
-        stem_result = separate_stems(audio_output, stems_dir)
-        
-        # Save stem files to DB
-        for stem_name, stem_path in stem_result["stem_paths"].items():
+
+        # Save stem files
+        stems = results.get("stems", {})
+        for stem_name, stem_path in stems.get("stem_paths", {}).items():
             try:
                 stem_type = StemType(stem_name)
             except ValueError:
                 stem_type = StemType.OTHER
-            
             stem_file = StemFile(
                 project_id=project.id,
                 stem_type=stem_type,
                 file_path=stem_path,
-                quality_score=stem_result["quality_scores"].get(stem_name),
+                quality_score=stems.get("quality_scores", {}).get(stem_name),
             )
             db.add(stem_file)
         db.commit()
-        
-        # ─── Step 3: Beat Analysis ──────────────────────────────────────
-        _update_status(project_id, ProjectStatus.ANALYZING, "Analyzing beats and tempo...")
-        self.update_state(state="PROGRESS", meta={"step": "analyzing_beats", "progress": 55})
-        
-        from services.beat_analysis import analyze_beats
-        
-        # Analyze the drums stem for better beat detection
-        drums_path = stem_result["stem_paths"].get("drums", audio_output)
-        beat_result = analyze_beats(drums_path)
-        
-        # ─── Step 4: Section Detection ──────────────────────────────────
-        self.update_state(state="PROGRESS", meta={"step": "detecting_sections", "progress": 70})
-        
-        from services.section_detect import detect_sections
-        
-        sections_result = detect_sections(
-            audio_output,
-            beat_result["beat_times"],
-            beat_result["downbeat_times"],
-            beat_result["overall_bpm"],
-        )
-        
-        # Save sections to DB
-        for sec_data in sections_result:
+
+        # Save sections
+        temporal = results.get("temporal", {})
+        sections_data = temporal.get("sections", [])
+        for sec_data in sections_data:
             section = Section(
                 project_id=project.id,
                 order_index=sec_data["order_index"],
@@ -145,129 +140,153 @@ def analyze_project(self, project_id: str):
                 bars=sec_data.get("bars"),
                 bpm=sec_data.get("bpm"),
                 meter=sec_data.get("meter"),
-                confidence=CONFIDENCE_MAP.get(sec_data.get("confidence", "low"), ConfidenceLevel.LOW),
+                confidence=CONFIDENCE_MAP.get(
+                    sec_data.get("meter_confidence", "low"), ConfidenceLevel.LOW
+                ),
             )
             db.add(section)
         db.commit()
-        
-        # ─── Step 5: Confidence Scoring ─────────────────────────────────
-        self.update_state(state="PROGRESS", meta={"step": "scoring_confidence", "progress": 80})
-        
-        from services.confidence import score_all_confidence
-        
-        confidence_result = score_all_confidence(
-            beat_result,
-            sections_result,
-            stem_result["quality_scores"],
-        )
-        
-        # ─── Step 6: Click Track ────────────────────────────────────────
-        _update_status(project_id, ProjectStatus.GENERATING_CLICK, "Generating click track...")
-        self.update_state(state="PROGRESS", meta={"step": "generating_click", "progress": 88})
-        
-        from services.click_generate import generate_click_track
-        
-        click_path = str(project_dir / "click.wav")
-        click_result = generate_click_track(
-            beat_result["beat_times"],
-            beat_result["downbeat_times"],
-            beat_result["duration_seconds"],
-            click_path,
-            mode="quarter",
-        )
-        
-        click_track = ClickTrack(
-            project_id=project.id,
-            file_path=click_result["file_path"],
-            mode=click_result["mode"],
-        )
-        db.add(click_track)
-        db.commit()
-        
-        # ─── Step 7: Waveform Peaks ────────────────────────────────────
-        self.update_state(state="PROGRESS", meta={"step": "generating_waveform", "progress": 93})
-        
-        from services.waveform import generate_waveform_peaks
-        
-        waveform_path = str(project_dir / "waveform.json")
-        generate_waveform_peaks(audio_output, waveform_path)
-        
-        # Also generate waveform for drums stem
-        if "drums" in stem_result["stem_paths"]:
-            drums_waveform_path = str(project_dir / "waveform_drums.json")
-            generate_waveform_peaks(stem_result["stem_paths"]["drums"], drums_waveform_path)
-        
-        # ─── Step 8: Persist Analysis Result ────────────────────────────
-        elapsed_ms = int((time.time() - start_time) * 1000)
-        
-        # Compute output hash for determinism validation
-        output_hash = _compute_output_hash(beat_result, sections_result)
-        
+
+        # Save click track
+        click = results.get("click", {})
+        if click:
+            click_track = ClickTrack(
+                project_id=project.id,
+                file_path=click.get("file_path", ""),
+                mode=click.get("mode", "quarter"),
+            )
+            db.add(click_track)
+            db.commit()
+
+        # Build analysis result
+        confidence = results.get("confidence", {})
+        groove = results.get("groove", {})
+        octave = temporal.get("octave_correction", {})
+        hits_data = results.get("hits", {})
+        pipeline = results.get("pipeline", {})
+        midi = results.get("midi", {})
+
+        elapsed_ms = pipeline.get("elapsed_ms", 0)
+        output_hash = _compute_output_hash(temporal, sections_data)
+
         analysis = AnalysisResult(
             project_id=project.id,
             pipeline_version=settings.pipeline_version,
             model_versions={
-                "demucs": stem_result["model_name"],
+                "demucs": stems.get("model_name", settings.demucs_model),
                 "librosa": "0.10.2",
                 "madmom": "0.17.dev0",
+                "engine": pipeline.get("engine_version", "2.0.0"),
             },
             random_seeds={"torch": settings.random_seed, "numpy": settings.random_seed},
             config_snapshot={
                 "sample_rate": settings.sample_rate,
                 "demucs_model": settings.demucs_model,
             },
-            overall_bpm=beat_result["overall_bpm"],
-            bpm_stable=beat_result["bpm_stable"],
-            time_signature=sections_result[0]["meter"] if sections_result else "4/4",
-            confidence_stem=CONFIDENCE_MAP.get(confidence_result["confidence_stem"]),
-            confidence_beat=CONFIDENCE_MAP.get(confidence_result["confidence_beat"]),
-            confidence_downbeat=CONFIDENCE_MAP.get(confidence_result["confidence_downbeat"]),
-            confidence_meter=CONFIDENCE_MAP.get(confidence_result["confidence_meter"]),
-            confidence_sections=CONFIDENCE_MAP.get(confidence_result["confidence_sections"]),
-            beats_json=beat_result["beat_times"],
-            downbeats_json=beat_result["downbeat_times"],
-            tempo_curve_json=beat_result["tempo_curve"],
+            overall_bpm=temporal.get("corrected_bpm"),
+            bpm_stable=temporal.get("bpm_stable"),
+            time_signature=temporal.get("time_signature", "4/4"),
+
+            # Legacy confidence columns (derived from vector for backward compat)
+            confidence_stem=CONFIDENCE_MAP.get(
+                _level_from_score(confidence.get("hit_classification_score", 0))
+            ),
+            confidence_beat=CONFIDENCE_MAP.get(
+                _level_from_score(confidence.get("tempo_stability_score", 0))
+            ),
+            confidence_downbeat=CONFIDENCE_MAP.get(
+                _level_from_score(confidence.get("downbeat_alignment_score", 0))
+            ),
+            confidence_meter=CONFIDENCE_MAP.get(
+                _level_from_score(confidence.get("meter_consistency_score", 0))
+            ),
+            confidence_sections=CONFIDENCE_MAP.get(
+                _level_from_score(confidence.get("section_contrast_score", 0))
+            ),
+
+            # Core data
+            beats_json=temporal.get("beat_times"),
+            downbeats_json=temporal.get("downbeat_times"),
+            onset_times_json=temporal.get("onset_times"),
+            tempo_curve_json=temporal.get("tempo_curve"),
+
+            # v2: Groove
+            groove_profile_json=groove,
+            swing_ratio=groove.get("swing_ratio_mean"),
+            groove_type=groove.get("groove_type"),
+
+            # v2: Hits
+            drum_hits_json=hits_data.get("drum_hits"),
+            num_drum_hits=hits_data.get("num_hits"),
+
+            # v2: Confidence vector
+            confidence_vector_json=confidence,
+
+            # v2: Tempo octave correction
+            raw_bpm=temporal.get("raw_bpm"),
+            octave_correction_factor=octave.get("correction_factor"),
+            tempo_candidates_json=octave.get("candidates"),
+
+            # v2: MIDI
+            midi_file_path=midi.get("file_path") if midi else None,
+
+            # v2: Metrical inference (debug)
+            metrical_inference_json=results.get("metrical_inference"),
+
             output_hash_sha256=output_hash,
             analysis_duration_ms=elapsed_ms,
         )
         db.add(analysis)
-        
+
         project.status = ProjectStatus.COMPLETE
-        project.status_message = f"Analysis complete in {elapsed_ms / 1000:.1f}s"
+        project.status_message = f"v2 analysis complete in {elapsed_ms / 1000:.1f}s"
         project.updated_at = datetime.now(timezone.utc)
         db.commit()
-        
-        logger.info(f"Pipeline complete for {project_id} in {elapsed_ms}ms")
-        
+
+        logger.info(f"v2 pipeline complete for {project_id} in {elapsed_ms}ms")
+
         return {
             "project_id": str(project_id),
             "status": "complete",
+            "engine_version": pipeline.get("engine_version"),
             "duration_ms": elapsed_ms,
-            "bpm": beat_result["overall_bpm"],
-            "sections": len(sections_result),
+            "bpm": temporal.get("corrected_bpm"),
+            "raw_bpm": temporal.get("raw_bpm"),
+            "groove_type": groove.get("groove_type"),
+            "num_sections": len(sections_data),
+            "num_hits": hits_data.get("num_hits"),
+            "confidence": confidence.get("overall_confidence_score"),
             "output_hash": output_hash,
         }
-    
+
     except Exception as e:
         logger.exception(f"Pipeline failed for {project_id}: {e}")
         _update_status(project_id, ProjectStatus.FAILED, str(e)[:500])
         raise
-    
+
     finally:
         db.close()
 
 
-def _compute_output_hash(beat_result: dict, sections_result: list[dict]) -> str:
+def _level_from_score(score: float) -> str:
+    """Convert continuous 0–1 score to high/medium/low for legacy columns."""
+    if score >= 0.75:
+        return "high"
+    elif score >= 0.45:
+        return "medium"
+    else:
+        return "low"
+
+
+def _compute_output_hash(temporal: dict, sections: list[dict]) -> str:
     """Compute a determinism hash over all analysis outputs."""
     hasher = hashlib.sha256()
-    
-    # Hash beat data
-    hasher.update(json.dumps(beat_result["beat_times"], sort_keys=True).encode())
-    hasher.update(json.dumps(beat_result["downbeat_times"], sort_keys=True).encode())
-    hasher.update(str(beat_result["overall_bpm"]).encode())
-    
-    # Hash section data
-    for sec in sections_result:
+
+    hasher.update(json.dumps(temporal.get("beat_times", []), sort_keys=True).encode())
+    hasher.update(json.dumps(temporal.get("downbeat_times", []), sort_keys=True).encode())
+    hasher.update(str(temporal.get("corrected_bpm", 0)).encode())
+
+    for sec in sections:
         hasher.update(json.dumps(sec, sort_keys=True).encode())
-    
+
     return hasher.hexdigest()

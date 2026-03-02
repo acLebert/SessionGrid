@@ -13,7 +13,7 @@ import { getAudioUrl, getStemUrl, getClickUrl } from "@/lib/api";
 
 /* ─── Types ───────────────────────────────────────────────────────────── */
 
-export type PlaybackMode = "mix" | "drums" | "click" | "click_drums";
+export type PlaybackMode = "mix" | "drums" | "click" | "click_drums" | "vocals" | "bass" | "other";
 
 interface AudioEngineState {
   isPlaying: boolean;
@@ -79,6 +79,14 @@ export function AudioEngineProvider({
           return getStemUrl(projectId, "drums");
         case "click":
           return getClickUrl(projectId);
+        case "vocals":
+          return getStemUrl(projectId, "vocals");
+        case "bass":
+          return getStemUrl(projectId, "bass");
+        case "other":
+          return getStemUrl(projectId, "other");
+        default:
+          return getAudioUrl(projectId);
       }
     },
     [projectId]

@@ -4,73 +4,413 @@
 
 @layer base {
   :root {
-    --background: #09090b;
-    --foreground: #fafafa;
+    --bg: #0a0a0c;
+    --surface: #111114;
+    --surface-raised: #1a1a1f;
+    --surface-overlay: #222228;
+    --border: rgba(255, 255, 255, 0.06);
+    --accent: #22d3ee;
+    --accent-hover: #67e8f9;
+    --accent-muted: rgba(34, 211, 238, 0.15);
+    --text-primary: #e5e5ea;
+    --text-secondary: #8e8e93;
+    --text-muted: #5c5c66;
+
+    --sat: env(safe-area-inset-top, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
+    --sal: env(safe-area-inset-left, 0px);
+    --sar: env(safe-area-inset-right, 0px);
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
   }
 
   body {
-    background-color: var(--background);
-    color: var(--foreground);
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background-color: var(--bg);
+    color: var(--text-primary);
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overscroll-behavior-y: contain;
+    padding-top: var(--sat);
+    padding-bottom: var(--sab);
+    padding-left: var(--sal);
+    padding-right: var(--sar);
   }
 
-  /* Scrollbar styling */
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 5px;
+    height: 5px;
   }
-
   ::-webkit-scrollbar-track {
     background: transparent;
   }
-
   ::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.15);
   }
 
-  ::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.2);
+  ::selection {
+    background: rgba(34, 211, 238, 0.3);
+    color: #fff;
   }
 }
 
 @layer components {
-  .glass-panel {
-    @apply rounded-3xl border border-white/10 bg-white/5 shadow-xl backdrop-blur;
+  /* ── Cards (used by home / projects list pages) ────── */
+  .card {
+    @apply rounded-2xl border border-white/[0.06] bg-surface-raised;
+  }
+  .card-interactive {
+    @apply card transition-all duration-200 active:scale-[0.98];
+  }
+  .card-interactive:hover {
+    @apply border-white/[0.1] bg-surface-overlay;
   }
 
-  .glass-panel-hover {
-    @apply glass-panel transition-colors hover:bg-white/[0.07];
+  /* ── Buttons ───────────────────────────────────────── */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 font-medium transition-all duration-150;
+    @apply rounded-xl text-sm;
+    @apply active:scale-[0.97];
+    min-height: 44px;
+    min-width: 44px;
   }
-
   .btn-primary {
-    @apply rounded-2xl bg-cyan-400 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-cyan-300;
+    @apply btn bg-accent px-5 py-2.5 text-black font-semibold;
   }
-
+  .btn-primary:hover {
+    @apply bg-accent-hover;
+  }
+  .btn-primary:disabled {
+    @apply cursor-not-allowed opacity-40;
+  }
   .btn-secondary {
-    @apply rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-zinc-100 transition-colors hover:bg-white/15;
+    @apply btn border border-white/10 bg-surface-raised px-5 py-2.5 text-text-primary;
   }
-
+  .btn-secondary:hover {
+    @apply border-white/15 bg-surface-overlay;
+  }
   .btn-ghost {
-    @apply rounded-2xl bg-zinc-900 px-4 py-2 text-sm text-zinc-200 transition-colors hover:bg-zinc-800;
+    @apply btn bg-transparent px-4 py-2.5 text-text-secondary;
+  }
+  .btn-ghost:hover {
+    @apply bg-white/5 text-text-primary;
+  }
+  .btn-icon {
+    @apply btn h-11 w-11 rounded-xl bg-surface-raised p-0;
+  }
+  .btn-icon:hover {
+    @apply bg-surface-overlay;
   }
 
+  /* ── Inputs ────────────────────────────────────────── */
+  .input {
+    @apply w-full rounded-xl border border-white/[0.08] bg-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors;
+    min-height: 44px;
+  }
+  .input:focus {
+    @apply border-accent/50 ring-1 ring-accent/20;
+  }
+  .input::placeholder {
+    @apply text-text-muted;
+  }
+
+  /* ── Badges ────────────────────────────────────────── */
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium;
+  }
   .confidence-high {
-    @apply rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-1 text-xs font-medium text-emerald-300;
+    @apply badge border border-emerald-500/25 bg-emerald-500/10 text-emerald-400;
   }
-
   .confidence-medium {
-    @apply rounded-full border border-amber-500/30 bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-300;
+    @apply badge border border-amber-500/25 bg-amber-500/10 text-amber-400;
   }
-
   .confidence-low {
-    @apply rounded-full border border-rose-500/30 bg-rose-500/15 px-2 py-1 text-xs font-medium text-rose-300;
+    @apply badge border border-rose-500/25 bg-rose-500/10 text-rose-400;
   }
 
-  .stat-card {
-    @apply rounded-2xl bg-zinc-950/80 p-4;
+  /* ── Segmented Control ─────────────────────────────── */
+  .segmented-control {
+    @apply inline-flex rounded-xl bg-surface p-1;
+  }
+  .segmented-control button {
+    @apply rounded-lg px-4 py-2 text-sm font-medium text-text-muted transition-all;
+    min-height: 36px;
+  }
+  .segmented-control button[data-active="true"] {
+    @apply bg-accent text-black shadow-md font-semibold;
+    box-shadow: 0 2px 8px rgba(34, 211, 238, 0.25);
+  }
+  .segmented-control button:not([data-active="true"]):hover {
+    @apply text-text-secondary;
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     DAW — Multi-track Studio Interface
+     ═══════════════════════════════════════════════════════ */
+
+  /* ── DAW Header ────────────────────────────────────── */
+  .daw-header {
+    @apply flex h-12 items-center justify-between border-b border-white/[0.05] px-4;
+    background: #0e0e11;
+  }
+  .daw-header-btn {
+    @apply flex h-8 w-8 items-center justify-center rounded-md text-[#8e8e93] transition-colors;
+  }
+  .daw-header-btn:hover {
+    @apply bg-white/5 text-white;
+  }
+  .daw-pill {
+    @apply inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium text-[#8e8e93];
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  /* ── DAW Left Icon Rail ────────────────────────────── */
+  .daw-icon-rail {
+    @apply w-12 flex-col items-center gap-1 border-r border-white/[0.05] py-3;
+    background: #0a0a0c;
+  }
+  .daw-rail-btn {
+    @apply flex h-9 w-9 items-center justify-center rounded-lg text-[#5c5c66] transition-colors;
+  }
+  .daw-rail-btn:hover {
+    @apply bg-white/5 text-[#8e8e93];
+  }
+  .daw-rail-btn.active {
+    @apply text-[#22d3ee];
+    background: rgba(34, 211, 238, 0.1);
+  }
+
+  /* ── DAW Track Headers Column ──────────────────────── */
+  .daw-headers-col {
+    @apply w-[180px] shrink-0 border-r border-white/[0.05];
+    background: #0e0e11;
+  }
+  @media (max-width: 767px) {
+    .daw-headers-col {
+      width: 120px;
+    }
+  }
+
+  .daw-track-header {
+    @apply flex flex-col justify-center border-b border-white/[0.04] px-3 py-2;
+  }
+
+  /* ── Mute / Solo Buttons ───────────────────────────── */
+  .daw-ms-btn {
+    @apply flex h-[22px] w-[22px] items-center justify-center rounded-full border text-[9px] font-bold leading-none transition-colors select-none;
+  }
+  .daw-mute-btn {
+    @apply daw-ms-btn border-[#3a3a40] text-[#5c5c66];
+  }
+  .daw-mute-btn:hover {
+    @apply border-[#4a4a55] text-[#8e8e93];
+  }
+  .daw-mute-btn.active {
+    @apply border-rose-500/50 text-rose-400;
+    background: rgba(239, 68, 68, 0.15);
+  }
+  .daw-solo-btn {
+    @apply daw-ms-btn border-[#3a3a40] text-[#5c5c66];
+  }
+  .daw-solo-btn:hover {
+    @apply border-[#4a4a55] text-[#8e8e93];
+  }
+  .daw-solo-btn.active {
+    @apply border-amber-500/50 text-amber-400;
+    background: rgba(245, 158, 11, 0.15);
+  }
+
+  /* ── Volume Slider ─────────────────────────────────── */
+  .daw-volume-slider {
+    @apply h-[3px] w-full cursor-pointer appearance-none rounded-full;
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .daw-volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 10px;
+    width: 10px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+  }
+  .daw-volume-slider::-moz-range-thumb {
+    height: 10px;
+    width: 10px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.6);
+    border: none;
+    cursor: pointer;
+  }
+
+  /* ── Pan Knob ──────────────────────────────────────── */
+  .daw-pan-knob {
+    @apply h-5 w-5 shrink-0 rounded-full border-2;
+    border-color: rgba(255, 255, 255, 0.1);
+    background: #1c1c20;
+  }
+
+  /* ── Section Markers ───────────────────────────────── */
+  .daw-section-markers {
+    @apply flex h-[28px] items-stretch overflow-hidden border-b border-white/[0.04];
+    background: #0c0c0f;
+  }
+  .daw-section-block {
+    @apply flex items-center overflow-hidden border-r px-1 text-[10px] font-medium leading-none transition-colors cursor-pointer;
+    border-right-width: 1px;
+  }
+  .daw-section-block:hover {
+    filter: brightness(1.3);
+  }
+  .daw-section-block.active {
+    filter: brightness(1.5);
+  }
+
+  /* ── Playhead ──────────────────────────────────────── */
+  .daw-playhead {
+    @apply pointer-events-none absolute inset-y-0 z-20;
+    transform: translateX(-50%);
+  }
+  .daw-playhead-line {
+    @apply h-full;
+    width: 1.5px;
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.25);
+  }
+  .daw-playhead-head {
+    @apply absolute left-1/2 -translate-x-1/2;
+    top: -2px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
+  }
+
+  /* ── Right Panel ───────────────────────────────────── */
+  .daw-right-panel {
+    @apply flex w-[280px] shrink-0 flex-col border-l border-white/[0.06] overflow-hidden;
+    background: #0e0e11;
+  }
+  @media (max-width: 767px) {
+    .daw-right-panel {
+      @apply fixed inset-y-0 right-0 z-30;
+      width: 280px;
+    }
+  }
+  .daw-panel-tab {
+    @apply rounded-md px-3 py-1.5 text-xs font-medium text-[#5c5c66] transition-colors;
+  }
+  .daw-panel-tab:hover {
+    @apply text-[#8e8e93];
+  }
+  .daw-panel-tab.active {
+    @apply text-white;
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  /* ── Section List Items (panel) ────────────────────── */
+  .daw-section-item {
+    @apply flex w-full items-center gap-2.5 rounded-lg p-2.5 text-left transition-colors;
+  }
+  .daw-section-item:hover {
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .daw-section-item.active {
+    background: rgba(34, 211, 238, 0.08);
+  }
+  .daw-section-num {
+    @apply flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[10px] font-semibold text-[#8e8e93];
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  /* ── Export Items (panel) ──────────────────────────── */
+  .daw-export-item {
+    @apply flex items-center justify-between rounded-lg px-3 py-2.5 text-sm transition-colors;
+    background: rgba(255, 255, 255, 0.03);
+  }
+  a.daw-export-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  /* ── Transport Bar ─────────────────────────────────── */
+  .daw-transport {
+    @apply flex h-14 items-center border-t border-white/[0.06] px-4 gap-2;
+    background: #111114;
+  }
+  .daw-transport-btn {
+    @apply flex h-9 w-9 items-center justify-center rounded-lg text-[#8e8e93] transition-colors;
+  }
+  .daw-transport-btn:hover {
+    @apply bg-white/5 text-white;
+  }
+  .daw-transport-btn-primary {
+    @apply flex h-10 w-10 items-center justify-center rounded-full text-white transition-all;
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .daw-transport-btn-primary:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+
+  /* ── Time Display ──────────────────────────────────── */
+  .daw-time {
+    @apply min-w-[3rem] text-center text-xs tabular-nums text-[#8e8e93];
+  }
+
+  /* ── Transport Scrubber ────────────────────────────── */
+  .daw-scrubber {
+    @apply h-[3px] w-full cursor-pointer appearance-none rounded-full;
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .daw-scrubber::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 12px;
+    width: 12px;
+    border-radius: 50%;
+    background: #fff;
+    cursor: pointer;
+    transition: transform 0.15s;
+  }
+  .daw-scrubber:hover::-webkit-slider-thumb {
+    transform: scale(1.25);
+  }
+  .daw-scrubber::-moz-range-thumb {
+    height: 12px;
+    width: 12px;
+    border-radius: 50%;
+    background: #fff;
+    border: none;
+    cursor: pointer;
+  }
+  .daw-scrubber::-webkit-slider-runnable-track {
+    height: 3px;
+    border-radius: 9999px;
+  }
+  .daw-scrubber::-moz-range-track {
+    height: 3px;
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  /* ── Speed Buttons ─────────────────────────────────── */
+  .daw-speed-btn {
+    @apply rounded-md px-2 py-1 text-xs font-medium text-[#5c5c66] transition-colors;
+  }
+  .daw-speed-btn:hover {
+    @apply text-[#8e8e93];
+  }
+  .daw-speed-btn.active {
+    @apply text-white;
+    background: rgba(255, 255, 255, 0.08);
   }
 }
 
@@ -81,5 +421,33 @@
   }
   .scrollbar-none::-webkit-scrollbar {
     display: none;
+  }
+
+  .snap-x-mandatory {
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+  }
+  .snap-start {
+    scroll-snap-align: start;
+  }
+
+  .glass {
+    backdrop-filter: blur(20px) saturate(1.2);
+    -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #22d3ee, #0891b2, #67e8f9);
+  }
+
+  .touch-pan-y {
+    touch-action: pan-y;
+  }
+  .touch-pan-x {
+    touch-action: pan-x;
+  }
+  .touch-none {
+    touch-action: none;
   }
 }
