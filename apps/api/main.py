@@ -394,18 +394,18 @@ async def get_rhythm_debug(project_id: UUID, db: AsyncSession = Depends(get_db))
     ambiguous_count = 0
 
     for w in windows:
-        dom = w.get("dominant_hypothesis")
+        dom = w.get("dominant")  # key from WindowInferenceResult.to_dict()
         if dom:
             bc = dom.get("beat_count", 0)
             unique_meters.add(f"{bc}/4")
             confidences.append(dom.get("confidence", 0.0))
-        if w.get("ambiguity_flag"):
+        if w.get("ambiguous"):  # key from WindowInferenceResult.to_dict()
             ambiguous_count += 1
 
     # Sample first 10 windows
     sample_windows = []
     for w in windows[:10]:
-        dom = w.get("dominant_hypothesis")
+        dom = w.get("dominant")  # key from WindowInferenceResult.to_dict()
         sample_windows.append({
             "start_time": round(w.get("start_time", 0), 2),
             "end_time": round(w.get("end_time", 0), 2),

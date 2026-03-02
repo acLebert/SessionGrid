@@ -219,7 +219,20 @@ def run_pipeline(
             estimated_bpm=corrected_bpm,
             onset_strengths=onset_strengths,
         )
-        results["metrical_inference"] = metrical_result.to_dict()
+        # DEBUG ONLY — temporary logging for serialization verification
+        n_win = len(metrical_result.window_inferences)
+        n_dom_obj = sum(1 for w in metrical_result.window_inferences if w.dominant_hypothesis is not None)
+        logger.info(f"[metrical_inference] {n_win} windows, {n_dom_obj} with dominant object")
+        if metrical_result.global_dominant:
+            gd = metrical_result.global_dominant
+            logger.info(f"[metrical_inference] global_dominant: beat_count={gd.beat_count}, period={gd.base_period_seconds:.4f}, conf={gd.confidence:.4f}")
+        else:
+            logger.info("[metrical_inference] global_dominant: None")
+        mi_dict = metrical_result.to_dict()
+        n_dom_dict = sum(1 for w in mi_dict.get("window_inferences", []) if w.get("dominant") is not None)
+        logger.info(f"[metrical_inference] After to_dict(): {n_dom_dict}/{n_win} windows have dominant != null")
+        logger.info(f"[metrical_inference] Modulations: {len(mi_dict.get('detected_modulations', []))}")
+        results["metrical_inference"] = mi_dict
     except Exception as _mi_err:
         logger.warning(f"Metrical inference failed (non-fatal): {_mi_err}")
         results["metrical_inference"] = None
