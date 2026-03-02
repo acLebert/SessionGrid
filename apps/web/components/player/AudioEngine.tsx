@@ -13,15 +13,24 @@ import { getAudioUrl, getStemUrl, getClickUrl } from "@/lib/api";
 
 /* ─── Types ───────────────────────────────────────────────────────────── */
 
-export type PlaybackMode = "mix" | "drums" | "click" | "click_drums" | "vocals" | "bass" | "other";
+export type StemId = "vocals" | "drums" | "bass" | "other" | "click";
+
+interface StemState {
+  muted: boolean;
+  solo: boolean;
+  volume: number; // 0–1
+}
 
 interface AudioEngineState {
   isPlaying: boolean;
   currentTime: number;
   duration: number;
-  playbackMode: PlaybackMode;
+  stems: Record<StemId, StemState>;
   loopSection: Section | null;
   playbackRate: number;
+  isReady: boolean;
+  /* Legacy compat */
+  playbackMode: string;
 }
 
 interface AudioEngineActions {
@@ -30,9 +39,13 @@ interface AudioEngineActions {
   toggle: () => void;
   seek: (time: number) => void;
   seekFraction: (fraction: number) => void;
-  setPlaybackMode: (mode: PlaybackMode) => void;
+  toggleMute: (stemId: StemId) => void;
+  toggleSolo: (stemId: StemId) => void;
+  setStemVolume: (stemId: StemId, volume: number) => void;
   setLoopSection: (section: Section | null) => void;
   setPlaybackRate: (rate: number) => void;
+  /* Legacy compat — maps to solo behaviour */
+  setPlaybackMode: (mode: string) => void;
 }
 
 type AudioEngine = AudioEngineState & AudioEngineActions;
@@ -45,6 +58,21 @@ export function useAudioEngine(): AudioEngine {
   return ctx;
 }
 
+/* ─── Constants ───────────────────────────────────────────────────────── */
+
+const ALL_STEMS: StemId[] = ["vocals", "drums", "bass", "other", "click"];
+
+const DEFAULT_STEM_STATE: StemState = {
+  muted: false,
+  solo: false,
+  volume: 0.8,
+};
+
+function makeStemUrl(projectId: string, stemId: StemId): string {
+  if (stemId === "click") return getClickUrl(projectId);
+  return getStemUrl(projectId, stemId);
+}
+
 /* ─── Provider ────────────────────────────────────────────────────────── */
 
 interface AudioEngineProviderProps {
@@ -52,221 +80,438 @@ interface AudioEngineProviderProps {
   children: React.ReactNode;
 }
 
+/**
+ * Multi-stem audio engine using Web Audio API.
+ *
+ * Architecture:
+ *   For each stem we create:
+ *     <audio> → MediaElementSourceNode → GainNode → ctx.destination
+ *
+ *   Mute/solo/volume all manipulate the per-stem GainNode.
+ *   A "mix" <audio> loads the original audio as fallback when stems
+ *   haven't loaded yet.
+ *
+ *   All <audio> elements share the same currentTime — we sync them
+ *   on play, seek, and periodically via a drift-correction loop.
+ */
 export function AudioEngineProvider({
   projectId,
   children,
 }: AudioEngineProviderProps) {
-  /* Refs for the two audio layers we blend */
-  const primaryRef = useRef<HTMLAudioElement | null>(null);
-  const clickRef = useRef<HTMLAudioElement | null>(null);
+  /* ── Refs ────────────────────────────────────────────────────────── */
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const mixAudioRef = useRef<HTMLAudioElement | null>(null);
+  const mixSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const mixGainRef = useRef<GainNode | null>(null);
 
-  /* State */
+  const stemAudioRefs = useRef<Partial<Record<StemId, HTMLAudioElement>>>({});
+  const stemSourceRefs = useRef<Partial<Record<StemId, MediaElementAudioSourceNode>>>({});
+  const stemGainRefs = useRef<Partial<Record<StemId, GainNode>>>({});
+  const stemLoadedRef = useRef<Set<StemId>>(new Set());
+
+  const rafRef = useRef<number>(0);
+  const isSeekingRef = useRef(false);
+  const isPlayingRef = useRef(false);
+
+  /* ── State ───────────────────────────────────────────────────────── */
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [playbackMode, setPlaybackModeState] = useState<PlaybackMode>("mix");
+  const [isReady, setIsReady] = useState(false);
   const [loopSection, setLoopSection] = useState<Section | null>(null);
+  const loopRef = useRef<Section | null>(null);
   const [playbackRate, setPlaybackRateState] = useState(1);
+  const [stems, setStems] = useState<Record<StemId, StemState>>(() => {
+    const init: Record<string, StemState> = {};
+    for (const id of ALL_STEMS) {
+      init[id] = { ...DEFAULT_STEM_STATE };
+    }
+    return init as Record<StemId, StemState>;
+  });
+  const stemsRef = useRef(stems);
 
-  /* ── Build audio URLs ─────────────────────────────────────────────── */
-  const urlFor = useCallback(
-    (mode: PlaybackMode) => {
-      switch (mode) {
-        case "mix":
-          return getAudioUrl(projectId);
-        case "drums":
-        case "click_drums":
-          return getStemUrl(projectId, "drums");
-        case "click":
-          return getClickUrl(projectId);
-        case "vocals":
-          return getStemUrl(projectId, "vocals");
-        case "bass":
-          return getStemUrl(projectId, "bass");
-        case "other":
-          return getStemUrl(projectId, "other");
-        default:
-          return getAudioUrl(projectId);
-      }
+  // Keep refs in sync
+  useEffect(() => { stemsRef.current = stems; }, [stems]);
+  useEffect(() => { loopRef.current = loopSection; }, [loopSection]);
+  useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
+
+  /* ── Helper: resolve effective gain for a stem ─────────────────── */
+  const computeGain = useCallback(
+    (stemId: StemId, snap: Record<StemId, StemState>): number => {
+      const s = snap[stemId];
+      if (s.muted) return 0;
+      const anySolo = ALL_STEMS.some((id) => snap[id].solo);
+      if (anySolo && !s.solo) return 0;
+      return s.volume;
     },
-    [projectId]
+    []
   );
 
-  /* ── Create / swap <audio> elements when mode changes ─────────────── */
-  useEffect(() => {
-    // Primary audio source
-    if (!primaryRef.current) {
-      primaryRef.current = new Audio();
-      primaryRef.current.preload = "auto";
-    }
-    const primary = primaryRef.current;
-    const src = urlFor(playbackMode);
+  /* ── Apply gains to all stems + mix ────────────────────────────── */
+  const applyGains = useCallback(
+    (snap: Record<StemId, StemState>) => {
+      const ctx = audioCtxRef.current;
+      const now = ctx?.currentTime || 0;
 
-    // Compare only the pathname portion — primary.src is always absolute
-    const currentPath = (() => {
-      try { return new URL(primary.src).pathname; } catch { return ""; }
-    })();
-    const targetPath = (() => {
-      try { return new URL(src, window.location.origin).pathname; } catch { return src; }
-    })();
-
-    if (currentPath !== targetPath) {
-      const wasPlaying = !primary.paused;
-      const prevTime = primary.currentTime;
-      primary.src = src;
-      // Wait for the new source to be ready before seeking
-      const onCanPlay = () => {
-        primary.currentTime = prevTime || 0;
-        if (wasPlaying) primary.play().catch(() => {});
-        primary.removeEventListener("canplay", onCanPlay);
-      };
-      primary.addEventListener("canplay", onCanPlay);
-      primary.load();
-    }
-
-    // Click layer (only needed for click_drums mode)
-    if (playbackMode === "click_drums") {
-      if (!clickRef.current) {
-        clickRef.current = new Audio();
-        clickRef.current.preload = "auto";
+      for (const id of ALL_STEMS) {
+        const gain = stemGainRefs.current[id];
+        if (gain) {
+          gain.gain.setTargetAtTime(computeGain(id, snap), now, 0.015);
+        }
       }
-      const clickSrc = getClickUrl(projectId);
-      const clickPath = (() => {
-        try { return new URL(clickRef.current!.src).pathname; } catch { return ""; }
-      })();
-      const clickTarget = (() => {
-        try { return new URL(clickSrc, window.location.origin).pathname; } catch { return clickSrc; }
-      })();
-      if (clickPath !== clickTarget) {
-        clickRef.current.src = clickSrc;
-        clickRef.current.load();
+
+      // Mix node: mute when we have enough stems loaded, otherwise audible
+      if (mixGainRef.current) {
+        const stemsLoaded = stemLoadedRef.current.size >= 4;
+        mixGainRef.current.gain.setTargetAtTime(
+          stemsLoaded ? 0 : 0.8,
+          now,
+          0.015
+        );
       }
-      clickRef.current.currentTime = primary.currentTime;
-      clickRef.current.playbackRate = primary.playbackRate;
-      if (!primary.paused) clickRef.current.play().catch(() => {});
-    } else if (clickRef.current) {
-      clickRef.current.pause();
+    },
+    [computeGain]
+  );
+
+  /* ── Internal helpers ─────────────────────────────────────────── */
+  const seekAll = useCallback((time: number) => {
+    isSeekingRef.current = true;
+    const mix = mixAudioRef.current;
+    if (mix) {
+      mix.currentTime = time;
     }
-  }, [playbackMode, projectId, urlFor]);
+    for (const id of ALL_STEMS) {
+      const a = stemAudioRefs.current[id];
+      if (a && stemLoadedRef.current.has(id)) {
+        a.currentTime = time;
+      }
+    }
+    setCurrentTime(time);
+    // Small delay to let elements settle before enabling drift correction
+    setTimeout(() => { isSeekingRef.current = false; }, 100);
+  }, []);
 
-  /* ── timeupdate / metadata listeners ──────────────────────────────── */
+  const playAll = useCallback(() => {
+    const ctx = audioCtxRef.current;
+    if (ctx && ctx.state === "suspended") {
+      ctx.resume();
+    }
+
+    const mix = mixAudioRef.current;
+    if (mix) {
+      mix.play().catch((err) => {
+        console.warn("[AudioEngine] Mix play failed:", err);
+      });
+    }
+
+    for (const id of ALL_STEMS) {
+      const a = stemAudioRefs.current[id];
+      if (a && stemLoadedRef.current.has(id)) {
+        if (mix) a.currentTime = mix.currentTime;
+        a.play().catch(() => {});
+      }
+    }
+  }, []);
+
+  const pauseAll = useCallback(() => {
+    mixAudioRef.current?.pause();
+    for (const id of ALL_STEMS) {
+      stemAudioRefs.current[id]?.pause();
+    }
+  }, []);
+
+  /* ── Init AudioContext + load all sources ──────────────────────── */
   useEffect(() => {
-    const primary = primaryRef.current;
-    if (!primary) return;
+    const ctx = new AudioContext();
+    audioCtxRef.current = ctx;
 
-    const onTime = () => setCurrentTime(primary.currentTime);
-    const onMeta = () => setDuration(primary.duration || 0);
-    const onEnded = () => {
-      setIsPlaying(false);
-      clickRef.current?.pause();
+    // ─ Mix (fallback) ─
+    const mixAudio = new Audio();
+    mixAudio.crossOrigin = "anonymous";
+    mixAudio.preload = "auto";
+    mixAudio.src = getAudioUrl(projectId);
+    mixAudioRef.current = mixAudio;
+
+    const mixSource = ctx.createMediaElementSource(mixAudio);
+    const mixGain = ctx.createGain();
+    mixGain.gain.value = 0.8;
+    mixSource.connect(mixGain).connect(ctx.destination);
+    mixSourceRef.current = mixSource;
+    mixGainRef.current = mixGain;
+
+    // Duration from mix
+    const onMeta = () => {
+      if (mixAudio.duration && isFinite(mixAudio.duration)) {
+        setDuration(mixAudio.duration);
+        setIsReady(true);
+      }
     };
+    mixAudio.addEventListener("loadedmetadata", onMeta);
+    mixAudio.addEventListener("durationchange", onMeta);
 
-    primary.addEventListener("timeupdate", onTime);
-    primary.addEventListener("loadedmetadata", onMeta);
-    primary.addEventListener("durationchange", onMeta);
-    primary.addEventListener("ended", onEnded);
+    // Error recovery
+    mixAudio.addEventListener("error", () => {
+      console.warn("[AudioEngine] Mix audio error, reloading in 1s");
+      setTimeout(() => { mixAudio.load(); }, 1000);
+    });
+
+    // Stall recovery — if the mix stalls while playing, reload and resume
+    mixAudio.addEventListener("stalled", () => {
+      if (!mixAudio.paused && mixAudio.readyState < 3) {
+        console.warn("[AudioEngine] Mix stalled, recovering…");
+        const t = mixAudio.currentTime;
+        mixAudio.load();
+        const onReady = () => {
+          mixAudio.currentTime = t;
+          if (isPlayingRef.current) mixAudio.play().catch(() => {});
+          mixAudio.removeEventListener("canplay", onReady);
+        };
+        mixAudio.addEventListener("canplay", onReady);
+      }
+    });
+
+    // Ended
+    mixAudio.addEventListener("ended", () => {
+      setIsPlaying(false);
+      isPlayingRef.current = false;
+      for (const id of ALL_STEMS) {
+        stemAudioRefs.current[id]?.pause();
+      }
+    });
+
+    // ─ Stems ─
+    for (const stemId of ALL_STEMS) {
+      const audio = new Audio();
+      audio.crossOrigin = "anonymous";
+      audio.preload = "auto";
+      audio.src = makeStemUrl(projectId, stemId);
+      stemAudioRefs.current[stemId] = audio;
+
+      const source = ctx.createMediaElementSource(audio);
+      const gain = ctx.createGain();
+      gain.gain.value = 0; // Will be set by applyGains once loaded
+      source.connect(gain).connect(ctx.destination);
+      stemSourceRefs.current[stemId] = source;
+      stemGainRefs.current[stemId] = gain;
+
+      audio.addEventListener("canplaythrough", () => {
+        stemLoadedRef.current.add(stemId);
+        // Once we have the 4 music stems, switch from mix fallback to stems
+        if (stemLoadedRef.current.size >= 4) {
+          applyGains(stemsRef.current);
+        }
+      });
+
+      // Stem errors are non-fatal — we still have the mix
+      audio.addEventListener("error", () => {
+        console.warn(`[AudioEngine] Stem "${stemId}" failed to load`);
+      });
+
+      // Stall recovery per stem
+      audio.addEventListener("stalled", () => {
+        if (!audio.paused && audio.readyState < 3) {
+          const t = audio.currentTime;
+          audio.load();
+          const onReady = () => {
+            audio.currentTime = t;
+            if (isPlayingRef.current) audio.play().catch(() => {});
+            audio.removeEventListener("canplay", onReady);
+          };
+          audio.addEventListener("canplay", onReady);
+        }
+      });
+
+      audio.load();
+    }
 
     return () => {
-      primary.removeEventListener("timeupdate", onTime);
-      primary.removeEventListener("loadedmetadata", onMeta);
-      primary.removeEventListener("durationchange", onMeta);
-      primary.removeEventListener("ended", onEnded);
-    };
-  }, []);
-
-  /* ── Section looping ──────────────────────────────────────────────── */
-  useEffect(() => {
-    if (!loopSection) return;
-    const primary = primaryRef.current;
-    if (!primary) return;
-
-    const check = () => {
-      if (primary.currentTime >= loopSection.end_time) {
-        primary.currentTime = loopSection.start_time;
-        if (clickRef.current) clickRef.current.currentTime = loopSection.start_time;
+      cancelAnimationFrame(rafRef.current);
+      mixAudio.pause();
+      mixAudio.removeAttribute("src");
+      mixAudio.load();
+      for (const id of ALL_STEMS) {
+        const a = stemAudioRefs.current[id];
+        if (a) { a.pause(); a.removeAttribute("src"); a.load(); }
       }
+      ctx.close().catch(() => {});
+      audioCtxRef.current = null;
+      stemAudioRefs.current = {};
+      stemSourceRefs.current = {};
+      stemGainRefs.current = {};
+      stemLoadedRef.current.clear();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
-    primary.addEventListener("timeupdate", check);
-    return () => primary.removeEventListener("timeupdate", check);
-  }, [loopSection]);
-
-  /* ── Playback rate sync ───────────────────────────────────────────── */
+  /* ── Apply gains whenever stem state changes ──────────────────── */
   useEffect(() => {
-    if (primaryRef.current) primaryRef.current.playbackRate = playbackRate;
-    if (clickRef.current) clickRef.current.playbackRate = playbackRate;
+    applyGains(stems);
+  }, [stems, applyGains]);
+
+  /* ── Animation frame for currentTime + loop enforcement ────────── */
+  useEffect(() => {
+    const tick = () => {
+      const mix = mixAudioRef.current;
+      if (mix) {
+        const t = mix.currentTime;
+        setCurrentTime(t);
+
+        // Loop enforcement at frame rate (much more precise than timeupdate)
+        const loop = loopRef.current;
+        if (loop && t >= loop.end_time) {
+          seekAll(loop.start_time);
+        }
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [seekAll]);
+
+  /* ── Drift correction — sync stems to mix every 500ms ──────────── */
+  useEffect(() => {
+    if (!isPlaying) return;
+
+    const interval = setInterval(() => {
+      const mix = mixAudioRef.current;
+      if (!mix || isSeekingRef.current) return;
+
+      const master = mix.currentTime;
+      for (const id of ALL_STEMS) {
+        const a = stemAudioRefs.current[id];
+        if (a && stemLoadedRef.current.has(id)) {
+          if (Math.abs(a.currentTime - master) > 0.05) {
+            a.currentTime = master;
+          }
+          // If mix is playing but stem stopped, restart it
+          if (!mix.paused && a.paused && isPlayingRef.current) {
+            a.currentTime = master;
+            a.play().catch(() => {});
+          }
+        }
+      }
+    }, 500);
+
+    return () => clearInterval(interval);
+  }, [isPlaying]);
+
+  /* ── Playback rate sync ───────────────────────────────────────── */
+  useEffect(() => {
+    if (mixAudioRef.current) mixAudioRef.current.playbackRate = playbackRate;
+    for (const id of ALL_STEMS) {
+      const a = stemAudioRefs.current[id];
+      if (a) a.playbackRate = playbackRate;
+    }
   }, [playbackRate]);
 
-  /* ── Actions ──────────────────────────────────────────────────────── */
+  /* ── Actions ──────────────────────────────────────────────────── */
   const play = useCallback(() => {
-    const primary = primaryRef.current;
-    if (!primary) return;
+    const mix = mixAudioRef.current;
+    if (!mix) return;
 
-    // If we have a loop section and we're outside it, jump to loop start
-    if (loopSection && (primary.currentTime < loopSection.start_time || primary.currentTime >= loopSection.end_time)) {
-      primary.currentTime = loopSection.start_time;
-      if (clickRef.current) clickRef.current.currentTime = loopSection.start_time;
+    // If looping and out of range, jump to loop start
+    const loop = loopRef.current;
+    if (loop && (mix.currentTime < loop.start_time || mix.currentTime >= loop.end_time)) {
+      seekAll(loop.start_time);
     }
 
-    primary.play().catch(() => {});
-    if (playbackMode === "click_drums" && clickRef.current) {
-      clickRef.current.currentTime = primary.currentTime;
-      clickRef.current.play().catch(() => {});
-    }
+    playAll();
     setIsPlaying(true);
-  }, [loopSection, playbackMode]);
+  }, [seekAll, playAll]);
 
   const pause = useCallback(() => {
-    primaryRef.current?.pause();
-    clickRef.current?.pause();
+    pauseAll();
     setIsPlaying(false);
-  }, []);
+  }, [pauseAll]);
 
   const toggle = useCallback(() => {
-    isPlaying ? pause() : play();
-  }, [isPlaying, pause, play]);
+    isPlayingRef.current ? pause() : play();
+  }, [pause, play]);
 
   const seek = useCallback((time: number) => {
-    const primary = primaryRef.current;
-    if (!primary) return;
-    primary.currentTime = time;
-    if (clickRef.current) clickRef.current.currentTime = time;
-    setCurrentTime(time);
-  }, []);
+    seekAll(time);
+  }, [seekAll]);
 
   const seekFraction = useCallback(
     (fraction: number) => {
-      seek(fraction * duration);
+      seekAll(fraction * duration);
     },
-    [duration, seek]
+    [duration, seekAll]
   );
 
-  const setPlaybackMode = useCallback(
-    (mode: PlaybackMode) => setPlaybackModeState(mode),
-    []
-  );
+  const toggleMute = useCallback((stemId: StemId) => {
+    setStems((prev) => ({
+      ...prev,
+      [stemId]: { ...prev[stemId], muted: !prev[stemId].muted },
+    }));
+  }, []);
+
+  const toggleSolo = useCallback((stemId: StemId) => {
+    setStems((prev) => ({
+      ...prev,
+      [stemId]: { ...prev[stemId], solo: !prev[stemId].solo },
+    }));
+  }, []);
+
+  const setStemVolume = useCallback((stemId: StemId, volume: number) => {
+    setStems((prev) => ({
+      ...prev,
+      [stemId]: { ...prev[stemId], volume: Math.max(0, Math.min(1, volume)) },
+    }));
+  }, []);
 
   const setPlaybackRate = useCallback(
     (rate: number) => setPlaybackRateState(rate),
     []
   );
 
-  /* ── Context value ────────────────────────────────────────────────── */
+  /* ── Legacy compat: setPlaybackMode maps to solo ──────────────── */
+  const setPlaybackMode = useCallback((mode: string) => {
+    if (mode === "mix") {
+      setStems((prev) => {
+        const next = { ...prev };
+        for (const id of ALL_STEMS) {
+          next[id] = { ...next[id], solo: false, muted: false };
+        }
+        return next;
+      });
+    } else if (ALL_STEMS.includes(mode as StemId)) {
+      setStems((prev) => {
+        const next = { ...prev };
+        for (const id of ALL_STEMS) {
+          next[id] = { ...next[id], solo: id === mode };
+        }
+        return next;
+      });
+    }
+  }, []);
+
+  const playbackMode = (() => {
+    const soloStem = ALL_STEMS.find((id) => stems[id].solo);
+    return soloStem || "mix";
+  })();
+
+  /* ── Context value ────────────────────────────────────────────── */
   const value: AudioEngine = {
     isPlaying,
     currentTime,
     duration,
-    playbackMode,
+    stems,
     loopSection,
     playbackRate,
+    isReady,
+    playbackMode,
     play,
     pause,
     toggle,
     seek,
     seekFraction,
-    setPlaybackMode,
+    toggleMute,
+    toggleSolo,
+    setStemVolume,
     setLoopSection,
     setPlaybackRate,
+    setPlaybackMode,
   };
 
   return (

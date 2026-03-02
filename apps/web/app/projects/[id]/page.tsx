@@ -24,7 +24,7 @@ import {
   getWaveformData,
 } from "@/lib/api";
 import type { Project, ProjectStatus, Section, WaveformData } from "@/lib/types";
-import { AudioEngineProvider, useAudioEngine } from "@/components/player/AudioEngine";
+import { AudioEngineProvider, useAudioEngine, type StemId } from "@/components/player/AudioEngine";
 import { ArrangementMap } from "@/components/analysis/ArrangementMap";
 import { ExportPanel } from "@/components/analysis/ExportPanel";
 import { ProcessingView } from "@/components/analysis/ProcessingView";
@@ -390,8 +390,7 @@ function DAWContent({
   const [rightPanel, setRightPanel] = useState<"sections" | "export" | null>(
     "sections"
   );
-  const [soloTrack, setSoloTrack] = useState<string | null>(null);
-  const [mutedTracks, setMutedTracks] = useState<Set<string>>(new Set());
+  // Stem mute/solo/volume is managed inside AudioEngine — read from audio.stems
   const [trackWaveforms, setTrackWaveforms] = useState<
     Record<string, WaveformData>
   >({});
@@ -413,34 +412,16 @@ function DAWContent({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
 
-  // Map solo track → playback mode
-  useEffect(() => {
-    if (!soloTrack) {
-      audio.setPlaybackMode("mix");
-    } else if (
-      soloTrack === "drums" ||
-      soloTrack === "vocals" ||
-      soloTrack === "bass" ||
-      soloTrack === "other"
-    ) {
-      audio.setPlaybackMode(soloTrack as "drums" | "vocals" | "bass" | "other");
-    } else if (soloTrack === "click") {
-      audio.setPlaybackMode("click");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [soloTrack]);
-
   function handleSolo(trackId: string) {
-    setSoloTrack((prev) => (prev === trackId ? null : trackId));
+    audio.toggleSolo(trackId as StemId);
   }
 
   function handleMute(trackId: string) {
-    setMutedTracks((prev) => {
-      const next = new Set(prev);
-      if (next.has(trackId)) next.delete(trackId);
-      else next.add(trackId);
-      return next;
-    });
+    audio.toggleMute(trackId as StemId);
+  }
+
+  function handleVolume(trackId: string, value: number) {
+    audio.setStemVolume(trackId as StemId, value / 100);
   }
 
   function handleSeek(fraction: number) {
@@ -546,9 +527,9 @@ function DAWContent({
                 <div className="flex items-center gap-1.5">
                   <button
                     onClick={() => handleMute(track.id)}
-                    className={`daw-mute-btn ${mutedTracks.has(track.id) ? "active" : ""}`}
+                    className={`daw-mute-btn ${audio.stems[track.id as StemId]?.muted ? "active" : ""}`}
                     title={
-                      mutedTracks.has(track.id)
+                      audio.stems[track.id as StemId]?.muted
                         ? `Unmute ${track.name}`
                         : `Mute ${track.name}`
                     }
@@ -557,9 +538,9 @@ function DAWContent({
                   </button>
                   <button
                     onClick={() => handleSolo(track.id)}
-                    className={`daw-solo-btn ${soloTrack === track.id ? "active" : ""}`}
+                    className={`daw-solo-btn ${audio.stems[track.id as StemId]?.solo ? "active" : ""}`}
                     title={
-                      soloTrack === track.id
+                      audio.stems[track.id as StemId]?.solo
                         ? `Unsolo ${track.name}`
                         : `Solo ${track.name}`
                     }
@@ -570,7 +551,7 @@ function DAWContent({
                     className="ml-1 truncate text-xs font-medium"
                     style={{
                       color:
-                        soloTrack === track.id ? track.color : undefined,
+                        audio.stems[track.id as StemId]?.solo ? track.color : undefined,
                     }}
                   >
                     {track.name}
@@ -581,7 +562,8 @@ function DAWContent({
                     type="range"
                     min={0}
                     max={100}
-                    defaultValue={80}
+                    value={Math.round((audio.stems[track.id as StemId]?.volume ?? 0.8) * 100)}
+                    onChange={(e) => handleVolume(track.id, Number(e.target.value))}
                     className="daw-volume-slider"
                   />
                   <div
@@ -647,8 +629,8 @@ function DAWContent({
                   sections={project.sections}
                   activeSection={activeSection}
                   duration={duration}
-                  isSolo={soloTrack === track.id}
-                  isMuted={mutedTracks.has(track.id)}
+                  isSolo={audio.stems[track.id as StemId]?.solo ?? false}
+                  isMuted={audio.stems[track.id as StemId]?.muted ?? false}
                   onSeek={handleSeek}
                 />
               </div>
