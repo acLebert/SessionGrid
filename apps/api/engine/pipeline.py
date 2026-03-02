@@ -242,7 +242,7 @@ def run_pipeline(
     # =====================================================================
     # STAGE 3c: SUBDIVISION GRAPH
     # =====================================================================
-    progress("subdivision_graph", 70, "Building subdivision graph…")
+    progress("subdivision_graph", 72, "Building subdivision graph…")
     try:
         _sg_builder = PersistentSubdivisionGraphBuilder(window_beats=8)
         _sg_graph = _sg_builder.build(
@@ -253,11 +253,12 @@ def run_pipeline(
         )
         results["subdivision_graph"] = _sg_graph.to_dict()
         logger.info(
-            f"[subdivision_graph] {len(_sg_graph.layers)} layers, "
-            f"{len(_sg_graph.phase_relations)} phase relations"
+            "[subdivision_graph] %d layers, %d phase relations",
+            len(_sg_graph.layers),
+            len(_sg_graph.phase_relations),
         )
     except Exception as _sg_err:
-        logger.warning(f"Subdivision graph failed (non-fatal): {_sg_err}")
+        logger.exception("Subdivision graph stage failed (non-fatal): %s", _sg_err)
         results["subdivision_graph"] = None
 
     # =====================================================================
