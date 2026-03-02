@@ -77,20 +77,23 @@ DEFAULT_ANALYSIS_SR: int = 1000
 # They MUST sum to 1.0.  Adjusting them changes how the engine ranks
 # competing meter hypotheses.
 
-SCORING_WEIGHT_PERIODICITY: float = 0.25
+SCORING_WEIGHT_PERIODICITY: float = 0.20
 """Weight for raw periodicity strength in final confidence."""
 
-SCORING_WEIGHT_ACCENT: float = 0.20
+SCORING_WEIGHT_ACCENT: float = 0.16
 """Weight for accent alignment score."""
 
-SCORING_WEIGHT_IOI: float = 0.20
+SCORING_WEIGHT_IOI: float = 0.16
 """Weight for inter-onset-interval consistency score."""
 
-SCORING_WEIGHT_PREDICTION: float = 0.20
+SCORING_WEIGHT_PREDICTION: float = 0.16
 """Weight for prediction error inverse score."""
 
-SCORING_WEIGHT_REPETITION: float = 0.15
+SCORING_WEIGHT_REPETITION: float = 0.12
 """Weight for structural repetition across windows."""
+
+SCORING_WEIGHT_BAR_ACCENT: float = 0.20
+"""Weight for bar-level accent periodicity score."""
 
 HARMONIC_PENALTY_FACTOR: float = 0.30
 """Max penalty for hypotheses that are simple harmonic multiples of stronger ones."""
@@ -254,6 +257,9 @@ class MeterHypothesis:
         EMA-smoothed confidence from the temporal tracker.
     confidence : float
         Final weighted geometric mean score.
+    bar_accent_periodicity_score : float
+        Correlation of accent energy repeating at the hypothesis
+        beat_count period across the analysis window.
     structural_preferred : bool
         True if promoted by HierarchicalResolver as the structurally
         preferred meter in a harmonic family.
@@ -273,6 +279,7 @@ class MeterHypothesis:
     harmonic_penalty: float = 0.0
     stability_score: float = 0.0
     confidence: float = 0.0
+    bar_accent_periodicity_score: float = 0.0
     structural_preferred: bool = False
     promoted_from_subdivision: bool = False
 
@@ -301,6 +308,7 @@ class MeterHypothesis:
             "harmonic_penalty": round(self.harmonic_penalty, 4),
             "stability_score": round(self.stability_score, 4),
             "confidence": round(self.confidence, 4),
+            "bar_accent_periodicity_score": round(self.bar_accent_periodicity_score, 4),
             "cycle_seconds": round(self.cycle_seconds, 6),
             "structural_preferred": self.structural_preferred,
             "promoted_from_subdivision": self.promoted_from_subdivision,
@@ -1516,6 +1524,9 @@ class HypothesisScorer:
     multiplied by the periodicity strength, with harmonic penalty
     applied as a multiplicative reduction.
 
+    Sub-score 6 (bar accent periodicity) measures whether accent energy
+    repeats at the hypothesis beat_count period across the window.
+
     All sub-scores are normalised to [0, 1].
     """
 
@@ -1525,6 +1536,8 @@ class HypothesisScorer:
         onset_times: np.ndarray,
         onset_strengths: Optional[np.ndarray] = None,
         previous_groupings: Optional[List[List[int]]] = None,
+        window_start: float = 0.0,
+        window_end: float = 0.0,
     ) -> List[MeterHypothesis]:
         """Score and rank hypotheses.
 
@@ -1541,6 +1554,10 @@ class HypothesisScorer:
             Onset velocity/strength values.
         previous_groupings : list[list[int]] or None
             Grouping vectors from recent windows (for repetition scoring).
+        window_start : float
+            Window start time in seconds.
+        window_end : float
+            Window end time in seconds.
 
         Returns
         -------
@@ -1567,6 +1584,10 @@ class HypothesisScorer:
             )
             h.structural_repetition_score = self._structural_repetition(
                 h, previous_groupings,
+            )
+            h.bar_accent_periodicity_score = self._bar_accent_periodicity(
+                h, onset_times, onset_strengths,
+                window_start, window_end,
             )
 
         # Harmonic penalty requires cross-hypothesis comparison
@@ -1759,6 +1780,113 @@ class HypothesisScorer:
         )
         return float(matches / len(previous_groupings))
 
+    def _bar_accent_periodicity(
+        self,
+        h: MeterHypothesis,
+        onset_times: np.ndarray,
+        onset_strengths: Optional[np.ndarray],
+        window_start: float,
+        window_end: float,
+    ) -> float:
+        """Measure whether accent energy repeats at the bar period.
+
+        Quantises each onset to the nearest beat index using the
+        hypothesis period/phase, builds a per-beat accent strength
+        sequence, then computes the Pearson auto-correlation at the
+        hypothesis beat_count lag.
+
+        High correlation means accent energy is periodic at the bar
+        level — strong evidence for that meter grouping.
+
+        Parameters
+        ----------
+        h : MeterHypothesis
+            The hypothesis whose bar-level periodicity to evaluate.
+        onset_times : np.ndarray
+            Onset timestamps (may extend beyond window — filtered here).
+        onset_strengths : np.ndarray or None
+            Per-onset velocity weights.
+        window_start : float
+            Window start time in seconds.
+        window_end : float
+            Window end time in seconds.
+
+        Returns
+        -------
+        float
+            Score in [0, 1].  0 if insufficient data.
+
+        Time complexity
+        ---------------
+        O(N) where N = onsets in window.
+
+        Why this works
+        --------------
+        In 4/4 time, accent energy peaks every 4 beats (bar boundaries).
+        In 2/4, every 2 beats.  The auto-correlation at the bar lag
+        captures this periodicity without hardcoding any preference —
+        whichever beat_count genuinely repeats its accent pattern wins.
+        """
+        period = h.base_period_seconds
+        if period <= 0 or h.beat_count < 2:
+            return 0.0
+
+        # Filter to window
+        mask = (onset_times >= window_start) & (onset_times < window_end)
+        times = onset_times[mask]
+        if onset_strengths is not None:
+            strengths = onset_strengths[mask]
+        else:
+            strengths = np.ones(len(times), dtype=np.float64)
+
+        if len(times) < 4:
+            return 0.0
+
+        phase = h.phase_offset
+
+        # Total number of beats spanning the window
+        window_dur = window_end - window_start
+        n_beats = int(np.ceil(window_dur / period)) + 1
+        if n_beats < h.beat_count + 1:
+            return 0.0
+
+        # Accumulate accent strength per quantised beat
+        beat_accents = np.zeros(n_beats, dtype=np.float64)
+        beat_counts_arr = np.zeros(n_beats, dtype=np.float64)
+
+        for t, s in zip(times, strengths):
+            bi = (t - window_start - phase) / period
+            bi_int = int(round(bi))
+            if 0 <= bi_int < n_beats:
+                beat_accents[bi_int] += s
+                beat_counts_arr[bi_int] += 1.0
+
+        # Normalise: average strength per beat (avoid div by zero)
+        for i in range(n_beats):
+            if beat_counts_arr[i] > 0:
+                beat_accents[i] /= beat_counts_arr[i]
+
+        lag = h.beat_count
+        if len(beat_accents) <= lag:
+            return 0.0
+
+        a = beat_accents[:-lag]
+        b = beat_accents[lag:]
+
+        # Need non-zero variance in both halves
+        var_a = np.var(a)
+        var_b = np.var(b)
+        if var_a < 1e-12 or var_b < 1e-12:
+            return 0.0
+
+        corr_matrix = np.corrcoef(a, b)
+        corr = float(corr_matrix[0, 1])
+
+        if np.isnan(corr) or corr < 0:
+            corr = 0.0
+
+        return min(corr, 1.0)
+
     def _apply_harmonic_penalties(
         self,
         hypotheses: List[MeterHypothesis],
@@ -1832,6 +1960,7 @@ class HypothesisScorer:
             (max(h.ioi_consistency_score, floor), SCORING_WEIGHT_IOI),
             (max(h.prediction_error_score, floor), SCORING_WEIGHT_PREDICTION),
             (max(h.structural_repetition_score, floor), SCORING_WEIGHT_REPETITION),
+            (max(h.bar_accent_periodicity_score, floor), SCORING_WEIGHT_BAR_ACCENT),
         ]
 
         log_product = sum(w * np.log(s) for s, w in scores_weights)
@@ -2629,6 +2758,8 @@ def run_metrical_inference(
             onset_times=window_onsets,
             onset_strengths=window_strengths,
             previous_groupings=prev_groupings,
+            window_start=wpr.start_time,
+            window_end=wpr.end_time,
         )
 
         # Hierarchical resolution — promote structural meters
