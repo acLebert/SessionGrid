@@ -77,10 +77,10 @@
   /* ── Buttons ───────────────────────────────────────── */
   .btn {
     @apply inline-flex items-center justify-center gap-2 font-medium transition-all duration-150;
-    @apply rounded-xl text-sm;
-    @apply active:scale-[0.97];
-    min-height: 44px;
-    min-width: 44px;
+    @apply rounded-lg text-sm;
+    @apply active:scale-[0.98];
+    min-height: 40px;
+    min-width: 40px;
   }
   .btn-primary {
     @apply btn bg-accent px-5 py-2.5 text-black font-semibold;
@@ -104,7 +104,7 @@
     @apply bg-white/5 text-text-primary;
   }
   .btn-icon {
-    @apply btn h-11 w-11 rounded-xl bg-surface-raised p-0;
+    @apply btn h-10 w-10 rounded-lg bg-surface-raised p-0;
   }
   .btn-icon:hover {
     @apply bg-surface-overlay;
@@ -112,8 +112,8 @@
 
   /* ── Inputs ────────────────────────────────────────── */
   .input {
-    @apply w-full rounded-xl border border-white/[0.08] bg-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors;
-    min-height: 44px;
+    @apply w-full rounded-lg border border-white/[0.06] bg-[#08080a] px-3.5 py-2.5 text-[13px] text-text-primary outline-none transition-colors;
+    min-height: 40px;
   }
   .input:focus {
     @apply border-accent/50 ring-1 ring-accent/20;
