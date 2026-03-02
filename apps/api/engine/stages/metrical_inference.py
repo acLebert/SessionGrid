@@ -254,6 +254,12 @@ class MeterHypothesis:
         EMA-smoothed confidence from the temporal tracker.
     confidence : float
         Final weighted geometric mean score.
+    structural_preferred : bool
+        True if promoted by HierarchicalResolver as the structurally
+        preferred meter in a harmonic family.
+    promoted_from_subdivision : bool
+        True if this hypothesis was promoted over a shorter-period
+        subdivision during hierarchical resolution.
     """
     base_period_seconds: float = 0.0
     beat_count: int = 4
@@ -267,6 +273,8 @@ class MeterHypothesis:
     harmonic_penalty: float = 0.0
     stability_score: float = 0.0
     confidence: float = 0.0
+    structural_preferred: bool = False
+    promoted_from_subdivision: bool = False
 
     @property
     def cycle_seconds(self) -> float:
@@ -294,6 +302,8 @@ class MeterHypothesis:
             "stability_score": round(self.stability_score, 4),
             "confidence": round(self.confidence, 4),
             "cycle_seconds": round(self.cycle_seconds, 6),
+            "structural_preferred": self.structural_preferred,
+            "promoted_from_subdivision": self.promoted_from_subdivision,
         }
 
 
@@ -1836,6 +1846,187 @@ class HypothesisScorer:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Stage 4b — Hierarchical Resolver
+# ---------------------------------------------------------------------------
+
+
+class HierarchicalResolver:
+    """Promote structurally meaningful meters over harmonic subdivisions.
+
+    After hypothesis scoring and before dominance tracking, this stage
+    groups hypotheses into harmonic families and promotes longer-period
+    hypotheses when they are structurally consistent and nearly as
+    confident as their shorter-period relatives.
+
+    Musical principle: if 2/4 and 4/4 both explain the data well, the
+    4/4 grouping is structurally richer (phrase-level structure) and
+    should be preferred.  But only if the evidence supports it — no
+    forced promotion.
+
+    This stage does NOT re-run scoring or modify scoring weights.  It
+    applies a one-pass structural adjustment only.
+    """
+
+    # Harmonic ratio tolerance
+    RATIO_TOLERANCE: float = 0.05
+    # Allowed integer ratios for harmonic family membership
+    ALLOWED_RATIOS: tuple = (2, 3, 4)
+
+    # Promotion thresholds
+    CONFIDENCE_RATIO: float = 0.85
+    ACCENT_RATIO: float = 0.9
+    PROMOTION_BOOST: float = 1.05
+    SUBDIVISION_DAMPEN: float = 0.90
+
+    def resolve(
+        self, hypotheses: List[MeterHypothesis],
+    ) -> List[MeterHypothesis]:
+        """Apply hierarchical promotion to a list of scored hypotheses.
+
+        Parameters
+        ----------
+        hypotheses : list[MeterHypothesis]
+            Scored hypotheses for a single window (confidence already set).
+
+        Returns
+        -------
+        list[MeterHypothesis]
+            Same list with confidence adjusted for promoted hypotheses.
+            No hypotheses are added or removed.
+        """
+        if len(hypotheses) < 2:
+            return hypotheses
+
+        families = self._group_harmonic_families(hypotheses)
+
+        for family in families:
+            if len(family) < 2:
+                continue
+            self._promote_within_family(family)
+
+        # Re-sort by confidence descending after adjustments
+        hypotheses.sort(key=lambda h: h.confidence, reverse=True)
+        return hypotheses
+
+    def _group_harmonic_families(
+        self, hypotheses: List[MeterHypothesis],
+    ) -> List[List[MeterHypothesis]]:
+        """Group hypotheses into harmonic families by period relationship.
+
+        Two hypotheses belong to the same family if the ratio of their
+        cycle durations is close to an integer in {2, 3, 4}.
+
+        Uses union-find grouping: if A~B and B~C then {A,B,C} are one
+        family.
+
+        Returns
+        -------
+        list[list[MeterHypothesis]]
+            Each inner list contains ≥1 harmony-related hypotheses,
+            sorted by cycle_seconds ascending (shortest first).
+        """
+        n = len(hypotheses)
+        parent = list(range(n))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                ci = hypotheses[i].cycle_seconds
+                cj = hypotheses[j].cycle_seconds
+                if ci <= 0 or cj <= 0:
+                    continue
+                larger = max(ci, cj)
+                smaller = min(ci, cj)
+                ratio = larger / smaller
+                rounded = round(ratio)
+                if (
+                    rounded in self.ALLOWED_RATIOS
+                    and abs(ratio - rounded) < self.RATIO_TOLERANCE
+                ):
+                    union(i, j)
+
+        # Collect groups
+        groups: Dict[int, List[MeterHypothesis]] = {}
+        for i, h in enumerate(hypotheses):
+            root = find(i)
+            groups.setdefault(root, []).append(h)
+
+        # Sort each family by cycle_seconds ascending
+        for g in groups.values():
+            g.sort(key=lambda h: h.cycle_seconds)
+
+        return list(groups.values())
+
+    def _promote_within_family(
+        self, family: List[MeterHypothesis],
+    ) -> None:
+        """Apply structural promotion within a harmonic family.
+
+        For each pair (shorter, longer) where longer.cycle is an
+        integer multiple of shorter.cycle, promote the longer if:
+
+        1. longer.confidence >= shorter.confidence * 0.85
+        2. longer.structural_repetition_score >= shorter.structural_repetition_score
+        3. longer.accent_alignment_score >= shorter.accent_alignment_score * 0.9
+
+        On promotion:
+        - longer.confidence *= 1.05 (capped at 1.0)
+        - shorter.confidence *= 0.90
+        - longer.structural_preferred = True
+        - longer.promoted_from_subdivision = True
+        """
+        # The family is sorted by cycle_seconds ascending.
+        # Try promoting from smallest to largest.
+        for i in range(len(family)):
+            shorter = family[i]
+            for j in range(i + 1, len(family)):
+                longer = family[j]
+
+                # Verify they are actually in harmonic relationship
+                if shorter.cycle_seconds <= 0:
+                    continue
+                ratio = longer.cycle_seconds / shorter.cycle_seconds
+                rounded = round(ratio)
+                if (
+                    rounded not in self.ALLOWED_RATIOS
+                    or abs(ratio - rounded) >= self.RATIO_TOLERANCE
+                ):
+                    continue
+
+                # Check promotion criteria
+                if longer.confidence < shorter.confidence * self.CONFIDENCE_RATIO:
+                    continue
+                if longer.structural_repetition_score < shorter.structural_repetition_score:
+                    continue
+                if longer.accent_alignment_score < shorter.accent_alignment_score * self.ACCENT_RATIO:
+                    continue
+
+                # Promote
+                longer.confidence = min(
+                    1.0, longer.confidence * self.PROMOTION_BOOST,
+                )
+                shorter.confidence *= self.SUBDIVISION_DAMPEN
+                longer.structural_preferred = True
+                longer.promoted_from_subdivision = True
+
+                logger.debug(
+                    f"Hierarchical promotion: {longer.beat_count}/{longer.grouping_vector} "
+                    f"promoted over {shorter.beat_count}/{shorter.grouping_vector} "
+                    f"(ratio={rounded}x, conf={longer.confidence:.3f} vs {shorter.confidence:.3f})"
+                )
+
+
 class HypothesisTracker:
     """Temporal tracking of meter hypotheses across sliding windows.
 
@@ -1871,6 +2062,9 @@ class HypothesisTracker:
     checking.  All O(1) for typical sizes.
     """
 
+    # Modulation must persist for this many consecutive windows
+    MODULATION_PERSISTENCE_WINDOWS: int = 2
+
     def __init__(
         self,
         top_k: int = TOP_K_TRACKER,
@@ -1893,6 +2087,12 @@ class HypothesisTracker:
         self._grouping_history: List[List[int]] = []
         # (key_a, key_b) → tracking dict
         self._poly_buffer: Dict[Tuple[str, str], dict] = {}
+        # Modulation persistence: require new dominant to hold for N windows
+        self._candidate_modulation_key: Optional[str] = None
+        self._candidate_modulation_hyp: Optional[MeterHypothesis] = None
+        self._candidate_modulation_counter: int = 0
+        self._candidate_modulation_time: float = 0.0
+        self._candidate_modulation_delta: float = 0.0
 
     @property
     def grouping_history(self) -> List[List[int]]:
@@ -1964,7 +2164,7 @@ class HypothesisTracker:
         else:
             dominant = None
 
-        # --- Step 4: Modulation detection ---
+        # --- Step 4: Modulation detection with persistence ---
         modulation_flag = False
         if dominant is not None:
             dom_key = dominant.hypothesis_key
@@ -1977,18 +2177,44 @@ class HypothesisTracker:
                 )
                 delta = dominant.stability_score - prev_smoothed
                 if delta > self.modulation_margin:
-                    modulation_flag = True
-                    self._modulation_events.append(ModulationEvent(
-                        time=window_start,
-                        from_hypothesis=self._prev_dominant,
-                        to_hypothesis=dominant,
-                        confidence_delta=delta,
-                    ))
-                    logger.info(
-                        f"Modulation at {window_start:.2f}s: "
-                        f"{self._prev_dominant_key} -> {dom_key} "
-                        f"(delta={delta:.3f})"
-                    )
+                    # New candidate for modulation — require persistence
+                    if self._candidate_modulation_key == dom_key:
+                        self._candidate_modulation_counter += 1
+                    else:
+                        # New candidate, reset counter
+                        self._candidate_modulation_key = dom_key
+                        self._candidate_modulation_hyp = dominant
+                        self._candidate_modulation_counter = 1
+                        self._candidate_modulation_time = window_start
+                        self._candidate_modulation_delta = delta
+
+                    # Only emit modulation after persistence threshold
+                    if self._candidate_modulation_counter >= self.MODULATION_PERSISTENCE_WINDOWS:
+                        modulation_flag = True
+                        self._modulation_events.append(ModulationEvent(
+                            time=self._candidate_modulation_time,
+                            from_hypothesis=self._prev_dominant,
+                            to_hypothesis=self._candidate_modulation_hyp or dominant,
+                            confidence_delta=self._candidate_modulation_delta,
+                        ))
+                        logger.info(
+                            f"Modulation at {self._candidate_modulation_time:.2f}s: "
+                            f"{self._prev_dominant_key} -> {dom_key} "
+                            f"(delta={self._candidate_modulation_delta:.3f}, "
+                            f"persisted {self._candidate_modulation_counter} windows)"
+                        )
+                        # Reset candidate after emission
+                        self._candidate_modulation_key = None
+                        self._candidate_modulation_hyp = None
+                        self._candidate_modulation_counter = 0
+                else:
+                    # Delta below margin — reset candidate
+                    self._candidate_modulation_key = None
+                    self._candidate_modulation_counter = 0
+            else:
+                # Same dominant — reset candidate
+                self._candidate_modulation_key = None
+                self._candidate_modulation_counter = 0
 
             self._prev_dominant_key = dom_key
             self._prev_dominant = dominant
@@ -2377,6 +2603,7 @@ def run_metrical_inference(
     max_period = _max_period_from_tempo(estimated_bpm)
     generator = HypothesisGenerator(max_period_sec=max_period)
     scorer = HypothesisScorer()
+    resolver = HierarchicalResolver()
     tracker = HypothesisTracker()
 
     window_inferences: List[WindowInferenceResult] = []
@@ -2403,6 +2630,9 @@ def run_metrical_inference(
             onset_strengths=window_strengths,
             previous_groupings=prev_groupings,
         )
+
+        # Hierarchical resolution — promote structural meters
+        scored = resolver.resolve(scored)
 
         # Track
         win_result = tracker.process_window(
