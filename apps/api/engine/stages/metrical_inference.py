@@ -77,23 +77,26 @@ DEFAULT_ANALYSIS_SR: int = 1000
 # They MUST sum to 1.0.  Adjusting them changes how the engine ranks
 # competing meter hypotheses.
 
-SCORING_WEIGHT_PERIODICITY: float = 0.20
+SCORING_WEIGHT_PERIODICITY: float = 0.16
 """Weight for raw periodicity strength in final confidence."""
 
-SCORING_WEIGHT_ACCENT: float = 0.16
+SCORING_WEIGHT_ACCENT: float = 0.14
 """Weight for accent alignment score."""
 
-SCORING_WEIGHT_IOI: float = 0.16
+SCORING_WEIGHT_IOI: float = 0.14
 """Weight for inter-onset-interval consistency score."""
 
-SCORING_WEIGHT_PREDICTION: float = 0.16
+SCORING_WEIGHT_PREDICTION: float = 0.14
 """Weight for prediction error inverse score."""
 
-SCORING_WEIGHT_REPETITION: float = 0.12
+SCORING_WEIGHT_REPETITION: float = 0.10
 """Weight for structural repetition across windows."""
 
-SCORING_WEIGHT_BAR_ACCENT: float = 0.20
+SCORING_WEIGHT_BAR_ACCENT: float = 0.17
 """Weight for bar-level accent periodicity score."""
+
+SCORING_WEIGHT_DOWNBEAT: float = 0.15
+"""Weight for downbeat-anchored alignment score."""
 
 HARMONIC_PENALTY_FACTOR: float = 0.30
 """Max penalty for hypotheses that are simple harmonic multiples of stronger ones."""
@@ -260,6 +263,9 @@ class MeterHypothesis:
     bar_accent_periodicity_score : float
         Correlation of accent energy repeating at the hypothesis
         beat_count period across the analysis window.
+    downbeat_alignment_score : float
+        How well the hypothesis bar length matches detected downbeat
+        spacing in the analysis window.
     structural_preferred : bool
         True if promoted by HierarchicalResolver as the structurally
         preferred meter in a harmonic family.
@@ -280,6 +286,7 @@ class MeterHypothesis:
     stability_score: float = 0.0
     confidence: float = 0.0
     bar_accent_periodicity_score: float = 0.0
+    downbeat_alignment_score: float = 0.0
     structural_preferred: bool = False
     promoted_from_subdivision: bool = False
 
@@ -309,6 +316,7 @@ class MeterHypothesis:
             "stability_score": round(self.stability_score, 4),
             "confidence": round(self.confidence, 4),
             "bar_accent_periodicity_score": round(self.bar_accent_periodicity_score, 4),
+            "downbeat_alignment_score": round(self.downbeat_alignment_score, 4),
             "cycle_seconds": round(self.cycle_seconds, 6),
             "structural_preferred": self.structural_preferred,
             "promoted_from_subdivision": self.promoted_from_subdivision,
@@ -1527,6 +1535,9 @@ class HypothesisScorer:
     Sub-score 6 (bar accent periodicity) measures whether accent energy
     repeats at the hypothesis beat_count period across the window.
 
+    Sub-score 7 (downbeat alignment) measures how well the hypothesis
+    bar length matches detected downbeat spacing.
+
     All sub-scores are normalised to [0, 1].
     """
 
@@ -1538,6 +1549,7 @@ class HypothesisScorer:
         previous_groupings: Optional[List[List[int]]] = None,
         window_start: float = 0.0,
         window_end: float = 0.0,
+        downbeat_times: Optional[np.ndarray] = None,
     ) -> List[MeterHypothesis]:
         """Score and rank hypotheses.
 
@@ -1558,6 +1570,8 @@ class HypothesisScorer:
             Window start time in seconds.
         window_end : float
             Window end time in seconds.
+        downbeat_times : np.ndarray or None
+            Detected downbeat timestamps from earlier pipeline stages.
 
         Returns
         -------
@@ -1588,6 +1602,9 @@ class HypothesisScorer:
             h.bar_accent_periodicity_score = self._bar_accent_periodicity(
                 h, onset_times, onset_strengths,
                 window_start, window_end,
+            )
+            h.downbeat_alignment_score = self._downbeat_alignment(
+                h, downbeat_times, window_start, window_end,
             )
 
         # Harmonic penalty requires cross-hypothesis comparison
@@ -1887,6 +1904,75 @@ class HypothesisScorer:
 
         return min(corr, 1.0)
 
+    def _downbeat_alignment(
+        self,
+        h: MeterHypothesis,
+        downbeat_times: Optional[np.ndarray],
+        window_start: float,
+        window_end: float,
+    ) -> float:
+        """Measure how well hypothesis bar length matches downbeat spacing.
+
+        Computes the expected bar length from the hypothesis, compares it
+        to the actual intervals between detected downbeats in the window,
+        and returns an exponential-decay score based on relative error.
+
+        Parameters
+        ----------
+        h : MeterHypothesis
+            The hypothesis to evaluate.
+        downbeat_times : np.ndarray or None
+            Detected downbeat timestamps from earlier pipeline stages.
+        window_start : float
+            Window start time in seconds.
+        window_end : float
+            Window end time in seconds.
+
+        Returns
+        -------
+        float
+            Score in [0, 1].  0 if insufficient downbeats or poor match.
+
+        Time complexity
+        ---------------
+        O(D) where D = downbeats in window (typically 1-4).
+
+        Why this works
+        --------------
+        Downbeats are structurally significant bar boundaries.  A correct
+        meter hypothesis should predict bar lengths that match the spacing
+        between detected downbeats.  The exponential decay ensures that
+        small errors are tolerated while large mismatches are heavily
+        penalised — without hardcoding any preference for a particular
+        beat count.
+        """
+        if downbeat_times is None or len(downbeat_times) == 0:
+            return 0.5  # neutral when no downbeat data available
+
+        period = h.base_period_seconds
+        if period <= 0 or h.beat_count < 1:
+            return 0.0
+
+        # Filter to window
+        mask = (downbeat_times >= window_start) & (downbeat_times < window_end)
+        db = downbeat_times[mask]
+
+        if len(db) < 2:
+            return 0.5  # neutral — not enough downbeats to evaluate
+
+        bar_length = h.cycle_seconds  # beat_count * base_period_seconds
+        intervals = np.diff(db)
+
+        # Relative error for each interval
+        error = np.abs(intervals - bar_length) / bar_length
+        mean_error = float(np.mean(error))
+
+        if mean_error > 0.25:
+            return 0.0
+
+        score = float(np.exp(-5.0 * mean_error))
+        return float(np.clip(score, 0.0, 1.0))
+
     def _apply_harmonic_penalties(
         self,
         hypotheses: List[MeterHypothesis],
@@ -1961,6 +2047,7 @@ class HypothesisScorer:
             (max(h.prediction_error_score, floor), SCORING_WEIGHT_PREDICTION),
             (max(h.structural_repetition_score, floor), SCORING_WEIGHT_REPETITION),
             (max(h.bar_accent_periodicity_score, floor), SCORING_WEIGHT_BAR_ACCENT),
+            (max(h.downbeat_alignment_score, floor), SCORING_WEIGHT_DOWNBEAT),
         ]
 
         log_product = sum(w * np.log(s) for s, w in scores_weights)
@@ -2642,6 +2729,7 @@ def run_metrical_inference(
     sr: int,
     estimated_bpm: Optional[float] = None,
     onset_strengths: Optional[List[float]] = None,
+    downbeat_times: Optional[List[float]] = None,
     analysis_sr: int = DEFAULT_ANALYSIS_SR,
     inference_window_seconds: float = 4.0,
     inference_hop_seconds: float = 1.0,
@@ -2666,6 +2754,9 @@ def run_metrical_inference(
         If known, constrains the period search space.
     onset_strengths : list[float] or None
         Per-onset velocity weighting.
+    downbeat_times : list[float] or None
+        Detected downbeat timestamps from earlier pipeline stages.
+        Used for downbeat-anchored alignment scoring.
     analysis_sr : int
         Internal FFT sample rate (default 1000 Hz).
     inference_window_seconds : float
@@ -2707,6 +2798,11 @@ def run_metrical_inference(
     os_arr = (
         np.asarray(onset_strengths, dtype=np.float64)
         if onset_strengths is not None
+        else None
+    )
+    db_arr = (
+        np.asarray(downbeat_times, dtype=np.float64)
+        if downbeat_times is not None
         else None
     )
 
@@ -2760,6 +2856,7 @@ def run_metrical_inference(
             previous_groupings=prev_groupings,
             window_start=wpr.start_time,
             window_end=wpr.end_time,
+            downbeat_times=db_arr,
         )
 
         # Hierarchical resolution — promote structural meters

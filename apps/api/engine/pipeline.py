@@ -218,6 +218,7 @@ def run_pipeline(
             sr=sr,
             estimated_bpm=corrected_bpm,
             onset_strengths=onset_strengths,
+            downbeat_times=downbeat_times,
         )
         # DEBUG ONLY — temporary logging for serialization verification
         n_win = len(metrical_result.window_inferences)
