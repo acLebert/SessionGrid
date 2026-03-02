@@ -1,151 +1,99 @@
 # SessionGrid
 
-**Turn demos into musician-ready arrangement maps.**
+Rhythm analysis engine and rehearsal instrument.
 
-SessionGrid is a web-first music-analysis platform that starts with a drummer-focused workflow. Upload a song or demo, isolate the drum stem, analyze tempo and structure, and get back a rehearsal-ready guide with click track support, section mapping, confidence indicators, and exportable outputs.
-
----
-
-## Why It Exists
-
-Musicians receive rough demos and need to learn them fast. SessionGrid reduces prep time by converting raw audio into a guided rehearsal system — not notation software, but a **rehearsal translator**.
-
-## What It Does
-
-- **Upload** any audio file (MP3, WAV, FLAC) or video (MP4, MOV)
-- **Extract** audio from video containers via FFmpeg
-- **Separate** drums stem using Demucs v4
-- **Analyze** tempo, beats, downbeats, sections, and time signatures
-- **Infer meter** via multi-resolution periodicity detection and hypothesis tracking
-- **Detect** metric modulations, polyrhythms, and ambiguous sections
-- **Classify** individual drum hits (kick, snare, hat, tom, cymbal)
-- **Profile** groove — swing ratio, microtiming, accent patterns
-- **Score** confidence on every analysis dimension (continuous 0–1 vector)
-- **Generate** a click track aligned to the real beat grid
-- **Export** MIDI (multi-track, quantization control), click WAV, JSON, waveform peaks
-- **Display** a waveform timeline with section markers and loopable playback
+Upload a track. Get back meter inference, subdivision graphs, groove profiling, drum hit classification, click tracks, and MIDI — with continuous confidence scoring across every dimension.
 
 ---
 
-## System Architecture
+## Stack
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌──────────────┐
-│   Next.js App   │────▶│   FastAPI API    │────▶│  PostgreSQL  │
-│   (Port 3000)   │     │   (Port 8000)    │     │  (Port 5432) │
-└─────────────────┘     └────────┬─────────┘     └──────────────┘
-                                 │
-                          ┌──────▼──────┐
-                          │    Redis     │
-                          │  (Port 6379) │
-                          └──────┬──────┘
-                                 │
-                     ┌───────────▼───────────┐
-                     │    Celery Worker(s)    │
-                     │                        │
-                     │  Engine v2 Pipeline    │
-                     │  ┌──────────────────┐  │
-                     │  │ 1. Separation    │  │
-                     │  │ 2. Signal        │  │
-                     │  │ 3. Temporal      │  │
-                     │  │ 3b. Metrical     │  │
-                     │  │     Inference    │  │
-                     │  │ 4. Groove        │  │
-                     │  │ 5. Hit Class.    │  │
-                     │  │ 6. Export        │  │
-                     │  └──────────────────┘  │
-                     └───────────┬───────────┘
-                                 │
-                     ┌───────────▼───────────┐
-                     │    File Storage       │
-                     │  (Local / S3-compat)  │
-                     └───────────────────────┘
+┌──────────────┐     ┌──────────────┐     ┌────────────┐
+│  Next.js 14  │────▶│   FastAPI     │────▶│ PostgreSQL │
+│  port 3000   │     │   port 8000   │     │ port 5432  │
+└──────────────┘     └──────┬───────┘     └────────────┘
+                            │
+                     ┌──────▼──────┐
+                     │    Redis    │
+                     │  port 6379  │
+                     └──────┬──────┘
+                            │
+                  ┌─────────▼─────────┐
+                  │   Celery Worker   │
+                  │                   │
+                  │   Engine v2       │
+                  │   Pipeline        │
+                  └─────────┬─────────┘
+                            │
+                  ┌─────────▼─────────┐
+                  │   File Storage    │
+                  │   local / S3      │
+                  └───────────────────┘
 ```
 
 | Layer | Technology |
 |-------|-----------|
 | Frontend | Next.js 14, TypeScript, Tailwind CSS |
-| Backend API | FastAPI (async, PostgreSQL via SQLAlchemy) |
-| Task Queue | Celery + Redis |
-| Audio Engine | Engine v2 (see below) |
-| Stem Separation | Demucs v4 (htdemucs) |
-| Beat Analysis | librosa + madmom |
-| Meter Inference | Custom multi-resolution periodicity + hypothesis tracking |
-| Audio Extraction | FFmpeg |
+| API | FastAPI, SQLAlchemy (async), Pydantic |
+| Task queue | Celery + Redis |
+| Engine | Python, librosa, madmom, Demucs v4 |
 | Database | PostgreSQL 16 |
-| Waveform UI | Custom Canvas renderer |
+| Audio extraction | FFmpeg |
 
 ---
 
-## Engine v2 — Pipeline Architecture
+## Engine v2 — Pipeline
 
-The analysis engine (`apps/api/engine/`) is a pure-function pipeline with zero database or Celery dependencies. The Celery task calls into it and handles persistence.
-
-### Pipeline Stages
+Pure-function pipeline with zero database or Celery dependencies. The worker calls in and handles persistence.
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                       Engine v2 Pipeline                             │
-│                                                                      │
-│  ┌────────────┐   ┌────────────┐   ┌─────────────┐                  │
-│  │ 1. Sepa-   │──▶│ 2. Signal  │──▶│ 3. Temporal │                  │
-│  │ ration     │   │            │   │             │                  │
-│  │            │   │ Onset det. │   │ Beat track  │                  │
-│  │ FFmpeg     │   │ + sample-  │   │ Downbeats   │                  │
-│  │ extract    │   │ level      │   │ Tempo corr. │                  │
-│  │ Demucs     │   │ refinement │   │ Sections    │                  │
-│  │ stems      │   │            │   │             │                  │
-│  └────────────┘   └────────────┘   └──────┬──────┘                  │
-│                                           │                          │
-│                                    ┌──────▼──────┐                  │
-│                                    │3b. Metrical │                  │
-│                                    │  Inference   │                  │
-│                                    │              │                  │
-│                                    │ Periodicity  │                  │
-│                                    │ Hypotheses   │                  │
-│                                    │ Tracking     │                  │
-│                                    └──────┬──────┘                  │
-│                                           │                          │
-│  ┌────────────┐   ┌────────────┐   ┌──────▼──────┐                  │
-│  │ 6. Export  │◀──│ 5. Hits    │◀──│ 4. Groove  │                  │
-│  │            │   │            │   │            │                  │
-│  │ MIDI       │   │ Drum hit   │   │ Swing      │                  │
-│  │ Click      │   │ classif.   │   │ Microtiming│                  │
-│  │ Waveforms  │   │ (k/s/h/t/c)│   │ Accents    │                  │
-│  └────────────┘   └────────────┘   └────────────┘                  │
-│                                                                      │
-│  Cross-cutting: confidence.py (metric vector) │ versioning.py       │
-└──────────────────────────────────────────────────────────────────────┘
+Upload
+  │
+  ├─ 1. Separation ──── FFmpeg extract → Demucs v4 stem isolation
+  │
+  ├─ 2. Signal ──────── Onset detection → sample-level transient refinement
+  │
+  ├─ 3. Temporal ────── Beat tracking → downbeats → tempo octave correction → sections
+  │
+  ├─ 3b. Metrical ───── Multi-resolution periodicity → hypothesis generation →
+  │      Inference       scoring → temporal tracking → modulation detection
+  │
+  ├─ 3c. Subdivision ── Persistent subdivision graph → multi-layer rhythm grid →
+  │      Graph           phase relations between layers
+  │
+  ├─ 4. Groove ──────── Swing detection → microtiming → accent profiling
+  │
+  ├─ 5. Hits ────────── Multi-feature drum hit classification (k/s/h/t/c)
+  │
+  ├─ 6. Export ──────── MIDI (multi-track) → click track → waveform peaks
+  │
+  └─ Confidence ─────── Metric-vector scoring (6 dimensions + overall)
 ```
 
-| Stage | Module | Purpose |
-|-------|--------|---------|
-| 1. Separation | `stages/separation.py` | FFmpeg audio extraction, Demucs v4 stem isolation, spectral SNR |
-| 2. Signal | `stages/signal.py` | Frame-level onset detection + sample-level transient refinement (sub-ms) |
-| 3. Temporal | `stages/temporal.py` | Beat tracking, downbeat detection, tempo octave correction, section segmentation |
-| 3b. Metrical Inference | `stages/metrical_inference.py` | Multi-resolution periodicity → hypothesis generation → scoring → temporal tracking |
-| 4. Groove | `stages/groove.py` | Swing detection, microtiming analysis, accent profiling, groove-type classification |
-| 5. Hits | `stages/hits.py` | Multi-feature drum hit classification (kick/snare/hat/tom/cymbal) |
-| 6. Export | `stages/export.py` | MIDI export (multi-track, quantization control), click track, waveform peaks |
-| Confidence | `confidence.py` | Continuous [0,1] metric-vector scoring (replaces heuristic bins) |
-| Versioning | `versioning.py` | Engine version tracking, artifact caching, stale-stage invalidation |
+| Stage | Module | Description |
+|-------|--------|-------------|
+| 1 | `stages/separation.py` | FFmpeg audio extraction, Demucs v4 stem isolation, spectral SNR |
+| 2 | `stages/signal.py` | Frame-level onset detection + sample-level transient refinement |
+| 3 | `stages/temporal.py` | Beat tracking, downbeat detection, tempo octave correction, sections |
+| 3b | `stages/metrical_inference.py` | Periodicity → hypothesis generation → scoring → tracking |
+| 3c | `stages/subdivision_graph.py` | Persistent multi-layer subdivision graph with phase relations |
+| 4 | `stages/groove.py` | Swing, microtiming, accent profiling, groove classification |
+| 5 | `stages/hits.py` | Drum hit classification (kick/snare/hat/tom/cymbal) |
+| 6 | `stages/export.py` | MIDI export, click track generation, waveform peaks |
+| — | `confidence.py` | Continuous [0,1] metric-vector confidence scoring |
+| — | `versioning.py` | Engine version tracking, artifact caching, stale-stage invalidation |
 
-### Metrical Inference Engine (Stage 3b)
+### Metrical Inference (Stage 3b)
 
-The metrical inference module (`stages/metrical_inference.py`, ~2400 lines) is the analytical core for rhythm intelligence. It handles complex rhythmic structures including math rock, polymeter, tempo changes, and metric modulations.
-
-**Sub-stages:**
+~2400 lines. Handles complex rhythmic structures: math rock, polymeter, tempo changes, metric modulations.
 
 ```
 Onset Impulse Train
        │
        ▼
 Multi-Resolution Periodicity Analysis
-  (autocorrelation + spectral, sliding windows at 4 resolutions)
-       │
-       ▼
-Periodicity Peak Extraction
-  (bounds filter, energy floor, prominence, separation)
+  (autocorrelation + spectral, sliding windows, 4 resolutions)
        │
        ▼
 Hypothesis Generator
@@ -154,68 +102,67 @@ Hypothesis Generator
        ▼
 Hypothesis Scorer
   (accent alignment, IOI consistency, prediction error,
-   structural repetition, harmonic penalty → confidence)
+   structural repetition, harmonic penalty, bar-level accent
+   periodicity, downbeat-anchored meter scoring)
        │
        ▼
 Hypothesis Tracker
-  (EMA smoothing, dominant tracking, modulation detection,
-   ambiguity flagging, polyrhythm buffer)
+  (EMA smoothing, hierarchical resolution, dominant tracking,
+   modulation detection, ambiguity flagging, polyrhythm buffer)
        │
        ▼
 InferenceResult
-  ├── window_inferences[]  (per-window dominant + competing hypotheses)
-  ├── detected_modulations[]  (time, from/to hypothesis, confidence delta)
-  ├── persistent_polyrhythms[]  (co-occurring non-harmonic layers)
-  └── global_dominant  (best overall hypothesis across all windows)
+  ├── window_inferences[]
+  ├── detected_modulations[]
+  ├── persistent_polyrhythms[]
+  └── global_dominant
 ```
 
-**Key data structures:**
+### Subdivision Graph (Stage 3c)
 
-| Type | Description |
-|------|-------------|
-| `PeriodicityCandidate` | A raw periodicity peak (period, strength, source) |
-| `MeterHypothesis` | Structured meter guess (period, beat_count, grouping_vector, phase, confidence, sub-scores) |
-| `WindowInferenceResult` | Per-window output (dominant, competing, ambiguity, modulation flags) |
-| `ModulationEvent` | Detected metric change (time, from/to hypotheses, confidence delta) |
-| `PolyrhythmLayer` | Persistent co-occurring non-harmonic periodicities |
-| `InferenceResult` | Top-level output aggregating all windows, modulations, polyrhythms |
+`PersistentSubdivisionGraphBuilder` — windowed analysis of onset data against the beat grid. Detects simultaneous subdivision ratios (2, 3, 5, 7, etc.), tracks layer persistence across time, and computes pairwise phase relationships between layers.
 
-### Evaluation Framework
+Output: `RhythmGraph` with `SubdivisionLayer[]` + `PhaseRelation[]`.
 
-The evaluation module (`engine/evaluation/`) provides a rigorous testing pipeline for the metrical inference engine:
+### Confidence Model
 
-| Module | Purpose |
-|--------|---------|
-| `ground_truth.py` | Immutable dataclasses (GroundTruth, MeterSegment, GroundTruthModulation, TempoSegment, PolyrhythmSegment) |
-| `transcript_parser.py` | JSON loading and schema validation for ground-truth files |
-| `metrics.py` | Side-effect-free metric computation (meter accuracy, grouping accuracy, modulation P/R/timing, polyrhythm recall, ambiguity alignment, confidence calibration) |
-| `evaluator.py` | Top-level evaluation pipeline + 5 synthetic test scenarios (no audio required) |
+Continuous [0,1] metric-vector. Geometric mean ensures a single weak dimension drags overall score.
 
-**Metrics computed:**
-
-- **Meter accuracy** — per-window dominant beat_count vs ground truth
-- **Grouping accuracy** — exact grouping_vector match
-- **Modulation precision/recall** — detected vs ground truth modulations (±2s tolerance)
-- **Modulation timing error** — mean |t_detected − t_gt| in ms
-- **Polyrhythm recall** — coverage of ground truth polyrhythm segments
-- **Ambiguity alignment** — agreement between engine ambiguity flags and ground truth
-- **Confidence calibration** — binned confidence vs empirical accuracy
-
-### Confidence Model v2
-
-Replaces heuristic "high/medium/low" bins with continuous [0, 1] metric-vector scoring:
-
-| Dimension | What It Measures |
-|-----------|-----------------|
-| `tempo_stability_score` | Tempo stability across the song (coefficient of variation) |
-| `downbeat_alignment_score` | Downbeat proximity to nearest beat grid point |
+| Dimension | Measures |
+|-----------|----------|
+| `tempo_stability_score` | Tempo coefficient of variation |
+| `downbeat_alignment_score` | Downbeat proximity to beat grid |
 | `meter_consistency_score` | Meter consistency across sections |
-| `section_contrast_score` | Feature contrast at section boundaries |
+| `section_contrast_score` | Feature contrast at boundaries |
 | `groove_consistency_score` | Groove pattern consistency |
 | `hit_classification_score` | Hit classification confidence |
-| `overall_confidence_score` | Weighted geometric mean of all dimensions |
+| `overall_confidence_score` | Weighted geometric mean |
 
-The geometric mean ensures a single bad dimension drags the overall score down significantly.
+---
+
+## Frontend
+
+Next.js 14 (App Router), TypeScript, Tailwind CSS. Three routes:
+
+| Route | Component | Description |
+|-------|-----------|-------------|
+| `/` | `page.tsx` | Upload console with rhythm scope visualization |
+| `/projects` | `projects/page.tsx` | Project list |
+| `/projects/[id]` | `projects/[id]/page.tsx` | Analysis dashboard |
+
+Key components:
+
+| Component | Description |
+|-----------|-------------|
+| `AudioEngine.tsx` | Multi-stem Web Audio API mixer (mute/solo/volume per stem) |
+| `WaveformDisplay.tsx` | Canvas waveform renderer |
+| `ArrangementMap.tsx` | Section arrangement view |
+| `TimelinePanel.tsx` | Timeline visualization |
+| `RhythmPreviewHero.tsx` | Analytical subdivision scope (landing page) |
+| `SubdivisionGraphPanel.tsx` | Subdivision graph debug panel |
+| `RhythmDebugPanel.tsx` | Metrical inference debug view |
+| `ProcessingView.tsx` | Processing status display |
+| `ConfidenceBadge.tsx` | Confidence level indicator |
 
 ---
 
@@ -224,73 +171,75 @@ The geometric mean ensures a single bad dimension drags the overall score down s
 ```
 SessionGrid/
 ├── apps/
-│   ├── api/                              # FastAPI backend
-│   │   ├── main.py                       # API routes (19 endpoints)
-│   │   ├── config.py                     # Settings
-│   │   ├── models.py                     # SQLAlchemy models
-│   │   ├── schemas.py                    # Pydantic schemas
-│   │   ├── database.py                   # DB session management
-│   │   ├── engine/                       # Engine v2
-│   │   │   ├── __init__.py               # ENGINE_VERSION = "2.0.0"
-│   │   │   ├── pipeline.py              # Pipeline orchestrator (pure functions)
-│   │   │   ├── confidence.py            # Metric-vector confidence scoring
-│   │   │   ├── versioning.py            # Version tracking + artifact caching
+│   ├── api/
+│   │   ├── main.py                        # API routes
+│   │   ├── config.py                      # Settings
+│   │   ├── models.py                      # SQLAlchemy models
+│   │   ├── schemas.py                     # Pydantic schemas
+│   │   ├── database.py                    # DB sessions
+│   │   ├── engine/
+│   │   │   ├── __init__.py                # ENGINE_VERSION
+│   │   │   ├── pipeline.py               # Pipeline orchestrator
+│   │   │   ├── confidence.py             # Metric-vector scoring
+│   │   │   ├── versioning.py             # Version tracking + caching
 │   │   │   ├── stages/
-│   │   │   │   ├── separation.py        # FFmpeg + Demucs stem isolation
-│   │   │   │   ├── signal.py            # Onset detection + refinement
-│   │   │   │   ├── temporal.py          # Beats, downbeats, tempo, sections
-│   │   │   │   ├── metrical_inference.py # Periodicity → hypotheses → tracking
-│   │   │   │   ├── groove.py            # Swing, microtiming, accents
-│   │   │   │   ├── hits.py              # Drum hit classification
-│   │   │   │   └── export.py            # MIDI, click, waveform peaks
+│   │   │   │   ├── separation.py         # FFmpeg + Demucs
+│   │   │   │   ├── signal.py             # Onset detection
+│   │   │   │   ├── temporal.py           # Beats, downbeats, sections
+│   │   │   │   ├── metrical_inference.py # Periodicity → hypotheses
+│   │   │   │   ├── subdivision_graph.py  # Multi-layer rhythm graph
+│   │   │   │   ├── groove.py             # Swing, microtiming
+│   │   │   │   ├── hits.py               # Drum hit classification
+│   │   │   │   └── export.py             # MIDI, click, waveforms
 │   │   │   └── evaluation/
-│   │   │       ├── ground_truth.py      # Ground-truth data model
-│   │   │       ├── transcript_parser.py # JSON loading + validation
-│   │   │       ├── metrics.py           # Evaluation metric computation
-│   │   │       └── evaluator.py         # Evaluation pipeline + test scenarios
-│   │   ├── services/                     # Legacy service wrappers
+│   │   │       ├── ground_truth.py       # Ground-truth data model
+│   │   │       ├── transcript_parser.py  # JSON loading + validation
+│   │   │       ├── metrics.py            # Metric computation
+│   │   │       └── evaluator.py          # Evaluation pipeline
 │   │   ├── workers/
-│   │   │   ├── celery_app.py             # Celery configuration
-│   │   │   └── tasks.py                  # Pipeline task + DB persistence
-│   │   ├── alembic/                      # Database migrations
+│   │   │   ├── celery_app.py              # Celery config
+│   │   │   └── tasks.py                   # Pipeline task + persistence
+│   │   ├── alembic/                       # Migrations
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
 │   │
-│   └── web/                              # Next.js frontend
+│   └── web/
 │       ├── app/
-│       │   ├── page.tsx                   # Home / upload page
-│       │   ├── layout.tsx                 # Root layout
-│       │   ├── globals.css                # Tailwind + custom styles
+│       │   ├── page.tsx                    # Upload console
+│       │   ├── layout.tsx                  # Root layout
+│       │   ├── globals.css                 # Styles
 │       │   └── projects/
-│       │       ├── page.tsx               # Projects list
-│       │       └── [id]/page.tsx          # Analysis dashboard
+│       │       ├── page.tsx                # Project list
+│       │       └── [id]/page.tsx           # Analysis dashboard
 │       ├── components/
 │       │   ├── analysis/
-│       │   │   ├── ArrangementMap.tsx     # Section arrangement view
-│       │   │   ├── ExportPanel.tsx        # Export controls
-│       │   │   ├── PracticeDeck.tsx       # Practice mode
-│       │   │   ├── ProcessingView.tsx     # Processing status
-│       │   │   ├── ProjectSidebar.tsx     # Sidebar navigation
-│       │   │   ├── TimelinePanel.tsx      # Timeline visualization
-│       │   │   └── RhythmDebugPanel.tsx   # DEBUG: Rhythm engine debug view
+│       │   │   ├── ArrangementMap.tsx
+│       │   │   ├── ExportPanel.tsx
+│       │   │   ├── PracticeDeck.tsx
+│       │   │   ├── ProcessingView.tsx
+│       │   │   ├── ProjectSidebar.tsx
+│       │   │   ├── RhythmDebugPanel.tsx
+│       │   │   ├── RhythmPreviewHero.tsx
+│       │   │   ├── SubdivisionGraphPanel.tsx
+│       │   │   └── TimelinePanel.tsx
 │       │   ├── player/
-│       │   │   ├── AudioEngine.tsx        # Audio playback engine
-│       │   │   └── WaveformDisplay.tsx    # Waveform canvas renderer
+│       │   │   ├── AudioEngine.tsx
+│       │   │   └── WaveformDisplay.tsx
 │       │   └── ui/
-│       │       └── ConfidenceBadge.tsx    # Confidence indicator
+│       │       └── ConfidenceBadge.tsx
 │       ├── lib/
-│       │   ├── api.ts                     # API client + types
-│       │   └── types.ts                   # TypeScript models
+│       │   ├── api.ts                      # API client
+│       │   └── types.ts                    # TypeScript models
 │       ├── Dockerfile
 │       └── package.json
 │
 ├── docs/
-│   ├── PRD.md                            # Product Requirements Document
-│   ├── ARCHITECTURE.md                   # System architecture
-│   └── VALIDATION.md                     # Repeatability & validation
+│   ├── PRD.md
+│   ├── ARCHITECTURE.md
+│   └── VALIDATION.md
 │
-├── storage/                              # Upload/output file storage
-├── docker-compose.yml                    # Full stack (5 services)
+├── storage/
+├── docker-compose.yml
 └── .gitignore
 ```
 
@@ -298,50 +247,35 @@ SessionGrid/
 
 ## Quick Start
 
-### Prerequisites
-
-- Docker & Docker Compose
-- (Or: Node.js 20+, Python 3.11+, PostgreSQL, Redis, FFmpeg)
-
-### Run with Docker Compose
+### Docker Compose
 
 ```bash
-# Clone the repo
 git clone https://github.com/acLebert/SessionGrid.git
 cd SessionGrid
-
-# Start all services
 docker compose up --build
 ```
 
-Services:
+| Service | Port |
+|---------|------|
+| web | 3000 |
+| api | 8000 |
+| worker | — |
+| postgres | 5432 |
+| redis | 6379 |
 
-| Service | Port | Description |
-|---------|------|-------------|
-| **web** | 3000 | Next.js frontend |
-| **api** | 8000 | FastAPI backend (hot-reload) |
-| **worker** | — | Celery worker (concurrency=1) |
-| **postgres** | 5432 | PostgreSQL 16 |
-| **redis** | 6379 | Redis 7 (task broker) |
+Frontend: http://localhost:3000
+API docs: http://localhost:8000/docs
 
-- **Frontend**: http://localhost:3000
-- **API Docs**: http://localhost:8000/docs
-
-Code is volume-mounted — changes to `apps/api/` and `apps/web/` are picked up immediately with a container restart (API/worker) or HMR (web).
-
-### Run Locally (Development)
+### Local Development
 
 **Backend:**
 ```bash
 cd apps/api
 python -m venv .venv
-.venv/Scripts/activate          # Windows
+.venv/Scripts/activate
 pip install -r requirements.txt
-
-# Start API
 uvicorn main:app --reload --port 8000
-
-# Start worker (separate terminal)
+# separate terminal:
 celery -A workers.celery_app worker --loglevel=info
 ```
 
@@ -354,115 +288,87 @@ npm run dev
 
 ---
 
-## API Endpoints
+## API
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/health` | Health check |
 | `GET` | `/api/projects` | List projects |
-| `POST` | `/api/projects` | Create project + upload |
-| `GET` | `/api/projects/:id` | Get project details |
-| `GET` | `/api/projects/:id/status` | Poll processing status |
+| `POST` | `/api/projects` | Create + upload |
+| `GET` | `/api/projects/:id` | Project details |
+| `GET` | `/api/projects/:id/status` | Poll status |
 | `POST` | `/api/projects/:id/analyze` | Trigger analysis |
-| `GET` | `/api/projects/:id/audio` | Stream extracted audio |
+| `GET` | `/api/projects/:id/audio` | Stream audio |
 | `GET` | `/api/projects/:id/stems/:type` | Download stem |
-| `GET` | `/api/projects/:id/click` | Download click track |
-| `GET` | `/api/projects/:id/waveform` | Get waveform data |
-| `GET` | `/api/projects/:id/midi` | Download MIDI file |
+| `GET` | `/api/projects/:id/click` | Download click |
+| `GET` | `/api/projects/:id/waveform` | Waveform data |
+| `GET` | `/api/projects/:id/midi` | Download MIDI |
 | `POST` | `/api/projects/:id/midi/quantize` | Re-quantize MIDI |
-| `GET` | `/api/projects/:id/drum-hits` | Get classified drum hits |
-| `GET` | `/api/projects/:id/groove` | Get groove profile |
-| `GET` | `/api/projects/:id/confidence` | Get confidence vector |
-| `GET` | `/api/projects/:id/rhythm-debug` | DEBUG: Metrical inference data |
+| `GET` | `/api/projects/:id/drum-hits` | Drum hits |
+| `GET` | `/api/projects/:id/groove` | Groove profile |
+| `GET` | `/api/projects/:id/confidence` | Confidence vector |
+| `GET` | `/api/projects/:id/rhythm-debug` | Metrical inference data |
+| `GET` | `/api/projects/:id/subdivision-debug` | Subdivision graph data |
 | `PATCH` | `/api/projects/:id/sections/:sid` | Edit section |
-| `GET` | `/api/projects/:id/export/json` | Export full analysis JSON |
-| `DELETE` | `/api/projects/:id` | Delete project + files |
+| `GET` | `/api/projects/:id/export/json` | Full analysis JSON |
+| `DELETE` | `/api/projects/:id` | Delete project |
 
 ---
 
-## Analysis Pipeline
+## Evaluation Framework
 
-```
-Upload
-  │
-  ▼
-1. Separation ─── FFmpeg extract → Demucs v4 stem isolation
-  │
-  ▼
-2. Signal ─────── Onset detection → sample-level transient refinement
-  │
-  ▼
-3. Temporal ───── Beat tracking → downbeats → tempo octave correction → sections
-  │
-  ▼
-3b. Metrical ──── Periodicity extraction → hypothesis generation →
-    Inference      scoring → temporal tracking → modulation detection
-  │
-  ▼
-4. Groove ─────── Swing detection → microtiming → accent profiling
-  │
-  ▼
-5. Hits ──────── Multi-feature drum hit classification (k/s/h/t/c)
-  │
-  ▼
-6. Export ─────── MIDI (multi-track) → click track → waveform peaks
-  │
-  ▼
-Confidence ────── Metric-vector scoring (6 dimensions + overall)
-  │
-  ▼
-Persist ──────── Results → PostgreSQL + file storage
-```
+Synthetic test pipeline for metrical inference. No audio required.
 
-Every job records input hash, pipeline version, model versions, random seeds, config snapshot, and output hash for full determinism and repeatability tracking.
+| Module | Purpose |
+|--------|---------|
+| `ground_truth.py` | Immutable ground-truth dataclasses |
+| `transcript_parser.py` | JSON loading + schema validation |
+| `metrics.py` | Metric computation (meter accuracy, modulation P/R, polyrhythm recall) |
+| `evaluator.py` | Pipeline + 5 synthetic test scenarios |
+
+Metrics: meter accuracy, grouping accuracy, modulation precision/recall/timing, polyrhythm recall, ambiguity alignment, confidence calibration.
 
 ---
 
-## Determinism & Versioning
+## Determinism
 
-- **Engine version**: `ENGINE_VERSION = "2.0.0"` — semver tracked per analysis run
-- **Stage versioning**: Each stage has its own sub-version; only stale stages re-run
-- **Artifact caching**: Intermediate results cached as `.npz` in project storage
-- **Reproducibility**: Identical input + engine version = identical output (pinned model weights, torch seeds, FFmpeg params)
-
----
-
-## Rights & Privacy
-
-- Users must confirm rights before uploading
-- No streaming-link ingestion (Spotify, YouTube, etc.)
-- Outputs are private by default
-- No stem redistribution features
+- Engine version semver tracked per run
+- Stage-level sub-versioning — only stale stages re-run
+- Intermediate artifacts cached as `.npz`
+- Input hash + engine version + model weights + seeds → deterministic output
 
 ---
 
 ## Roadmap
 
-- [x] MVP: Drums-focused analysis pipeline
+- [x] Drums-focused analysis pipeline
 - [x] Click track generation
 - [x] Section detection with confidence
-- [x] Engine v2: Staged pipeline architecture
+- [x] Engine v2 staged pipeline
 - [x] Multi-resolution periodicity detection
 - [x] Metrical inference (hypothesis generation, scoring, tracking)
+- [x] Hierarchical meter resolution + modulation persistence
+- [x] Bar-level accent periodicity scoring
+- [x] Downbeat-anchored meter scoring
+- [x] Persistent subdivision graph builder
 - [x] Metric modulation and polyrhythm detection
-- [x] Drum hit classification (kick/snare/hat/tom/cymbal)
+- [x] Drum hit classification
 - [x] Groove profiling (swing, microtiming, accents)
 - [x] MIDI export with quantization control
-- [x] Continuous confidence vector (replaces threshold bins)
-- [x] Evaluation framework with synthetic test scenarios
+- [x] Continuous confidence vector
+- [x] Multi-stem Web Audio API mixer
+- [x] Evaluation framework with synthetic tests
 - [x] Engine versioning and artifact caching
-- [x] Rhythm debug panel (development tool)
+- [x] Subdivision graph debug UI
+- [x] Metrical inference debug panel
 - [ ] Speed adjustment for practice
 - [ ] Count-in before loop playback
 - [ ] Bass/guitar stem analysis
 - [ ] Multi-instrument arrangement maps
-- [ ] PDF section guide export
-- [ ] MIDI map export
 - [ ] Manual section boundary editing
-- [ ] Bass stem analysis
-- [ ] Guitar stem analysis
-- [ ] Multi-instrument arrangement maps
 - [ ] User accounts & project history
+
+---
 
 ## License
 
