@@ -87,28 +87,47 @@ export default function HomePage() {
       <main className="flex flex-1 flex-col">
         {/* ─── Hero ─────────────────────────────────────────────── */}
         <section className="relative overflow-hidden">
-          {/* Animated grid background */}
+          {/* Animated grid background with opacity pulse */}
           <div
             className="pointer-events-none absolute inset-0"
             style={{
               backgroundImage:
-                "linear-gradient(rgba(34,211,238,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(34,211,238,0.03) 1px, transparent 1px)",
+                "linear-gradient(rgba(34,211,238,0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(34,211,238,0.025) 1px, transparent 1px)",
               backgroundSize: "60px 60px",
+              animation: "gridPulse 8s ease-in-out infinite",
             }}
           />
+          {/* Subtle horizontal scanline */}
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              backgroundImage:
+                "repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(34,211,238,0.008) 3px, rgba(34,211,238,0.008) 4px)",
+              animation: "scanDrift 12s linear infinite",
+            }}
+          />
+          {/* Bottom fade */}
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-[#0a0a0c]" />
+          {/* Radial vignette */}
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              background:
+                "radial-gradient(ellipse 70% 60% at 50% 40%, transparent 40%, #0a0a0c 100%)",
+            }}
+          />
 
           <div className="relative mx-auto flex max-w-6xl flex-col items-center gap-10 px-5 pb-20 pt-16 tablet:flex-row tablet:gap-16 tablet:px-8 tablet:pt-24 tablet:pb-28">
             {/* Left — Copy */}
             <div className="flex-1 text-center tablet:text-left">
-              <h1 className="text-[2rem] font-bold leading-[1.15] tracking-tight tablet:text-[2.75rem]">
-                See the structure
+              <h1 className="text-[2rem] font-bold leading-[1.1] tracking-[-0.02em] tablet:text-[2.75rem]">
+                <span className="text-[#c8c8cc]">See the structure</span>
                 <br />
                 <span className="bg-gradient-to-r from-cyan-400 to-teal-300 bg-clip-text text-transparent">
                   inside rhythm.
                 </span>
               </h1>
-              <p className="mt-4 max-w-md text-base leading-relaxed text-text-secondary tablet:text-lg">
+              <p className="mt-5 max-w-md text-base leading-[1.7] tracking-wide text-[#7a7a82] tablet:text-lg">
                 Upload a track. Watch meter, subdivisions, and phase layers unfold.
               </p>
               <div className="mt-8 flex flex-col gap-3 tablet:flex-row">
@@ -127,6 +146,18 @@ export default function HomePage() {
               <RhythmPreviewHero />
             </div>
           </div>
+
+          {/* Inline keyframes */}
+          <style jsx>{`
+            @keyframes gridPulse {
+              0%, 100% { opacity: 1; }
+              50% { opacity: 0.4; }
+            }
+            @keyframes scanDrift {
+              0% { background-position: 0 0; }
+              100% { background-position: 0 200px; }
+            }
+          `}</style>
         </section>
 
         {/* ─── Feature Cards ────────────────────────────────────── */}
@@ -136,33 +167,41 @@ export default function HomePage() {
               {
                 title: "Meter Intelligence",
                 desc: "Persistent detection of time signatures and structural meter shifts.",
-                accent: "from-cyan-500/20 to-cyan-500/0",
+                border: "from-cyan-500/25 via-cyan-500/8 to-transparent",
               },
               {
                 title: "Subdivision Graph",
                 desc: "Detect simultaneous rhythmic grids and nested patterns.",
-                accent: "from-teal-500/20 to-teal-500/0",
+                border: "from-teal-500/25 via-teal-500/8 to-transparent",
               },
               {
                 title: "Phase & Polymeter",
                 desc: "Track layer relationships and phase offsets across time.",
-                accent: "from-sky-500/20 to-sky-500/0",
+                border: "from-sky-500/25 via-sky-500/8 to-transparent",
               },
             ].map((card) => (
               <div
                 key={card.title}
-                className="group relative rounded-2xl border border-white/[0.06] bg-[#111114] p-6 transition-all duration-200 hover:-translate-y-0.5 hover:border-white/[0.12]"
+                className="group relative rounded-2xl p-px transition-all duration-300 hover:-translate-y-[3px]"
               >
-                {/* Gradient top border accent */}
+                {/* Gradient border shell */}
                 <div
-                  className={`pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r ${card.accent}`}
+                  className={`pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-b ${card.border} opacity-60 transition-opacity duration-300 group-hover:opacity-100`}
                 />
-                <h3 className="text-sm font-semibold tracking-wide text-text-primary">
-                  {card.title}
-                </h3>
-                <p className="mt-2 text-sm leading-relaxed text-text-muted">
-                  {card.desc}
-                </p>
+                {/* Inner panel */}
+                <div
+                  className="relative rounded-2xl bg-[#0d0d10] p-6 transition-colors duration-300 group-hover:bg-[#0f0f13]"
+                  style={{
+                    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03), inset 0 -1px 0 rgba(0,0,0,0.4)",
+                  }}
+                >
+                  <h3 className="text-[13px] font-semibold tracking-wide text-text-primary">
+                    {card.title}
+                  </h3>
+                  <p className="mt-2 text-[13px] leading-relaxed text-[#55555e]">
+                    {card.desc}
+                  </p>
+                </div>
               </div>
             ))}
           </div>
@@ -170,10 +209,10 @@ export default function HomePage() {
 
         {/* ─── Statement ────────────────────────────────────────── */}
         <section className="mx-auto max-w-2xl px-5 py-20 text-center tablet:px-8 tablet:py-28">
-          <h2 className="text-xl font-semibold tracking-tight tablet:text-2xl">
+          <h2 className="text-xl font-semibold tracking-[-0.01em] text-[#d0d0d4] tablet:text-2xl">
             Built for musicians who think in structure.
           </h2>
-          <p className="mt-4 text-base leading-relaxed text-text-secondary">
+          <p className="mt-4 text-base leading-[1.7] tracking-wide text-[#62626a]">
             SessionGrid maps the invisible architecture of rhythm — so you can
             rehearse, compose, and explore with clarity.
           </p>
@@ -190,12 +229,12 @@ export default function HomePage() {
 
           {/* Drop zone */}
           <div
-            className={`relative flex flex-col items-center justify-center rounded-2xl border transition-all ${
+            className={`relative flex flex-col items-center justify-center rounded-2xl border transition-all duration-300 ${
               dragging
                 ? "border-accent bg-accent-muted"
                 : selectedFile
                 ? "border-emerald-500/30 bg-emerald-500/[0.04]"
-                : "border-white/[0.08] bg-[#111114] hover:border-white/[0.15]"
+                : "border-white/[0.06] bg-[#0d0d10] hover:border-white/[0.12] hover:shadow-[0_0_24px_-6px_rgba(34,211,238,0.06)]"
             } px-6 py-10`}
             onDragOver={(e) => {
               e.preventDefault();
@@ -267,7 +306,7 @@ export default function HomePage() {
                 />
               </div>
 
-              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.06] bg-[#111114] p-3.5 transition-colors active:bg-surface-raised">
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.05] bg-[#0d0d10] p-3.5 transition-colors active:bg-surface-raised">
                 <input
                   type="checkbox"
                   checked={rightsConfirmed}
