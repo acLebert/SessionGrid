@@ -36,6 +36,7 @@ from engine.stages.hits import classify_hits, DrumHit
 from engine.stages.export import export_midi, generate_click_track, generate_waveform_peaks
 from engine.confidence import compute_confidence
 from engine.stages.metrical_inference import run_metrical_inference
+from engine.stages.subdivision_graph import PersistentSubdivisionGraphBuilder
 from engine.versioning import (
     load_manifest, save_manifest, get_stale_stages,
     mark_stage_complete, cache_artifact,
@@ -237,6 +238,27 @@ def run_pipeline(
     except Exception as _mi_err:
         logger.warning(f"Metrical inference failed (non-fatal): {_mi_err}")
         results["metrical_inference"] = None
+
+    # =====================================================================
+    # STAGE 3c: SUBDIVISION GRAPH
+    # =====================================================================
+    progress("subdivision_graph", 70, "Building subdivision graph…")
+    try:
+        _sg_builder = PersistentSubdivisionGraphBuilder(window_beats=8)
+        _sg_graph = _sg_builder.build(
+            onset_times=onset_times,
+            onset_strengths=onset_strengths,
+            beat_times=beat_result["beat_times"],
+            downbeat_times=downbeat_times,
+        )
+        results["subdivision_graph"] = _sg_graph.to_dict()
+        logger.info(
+            f"[subdivision_graph] {len(_sg_graph.layers)} layers, "
+            f"{len(_sg_graph.phase_relations)} phase relations"
+        )
+    except Exception as _sg_err:
+        logger.warning(f"Subdivision graph failed (non-fatal): {_sg_err}")
+        results["subdivision_graph"] = None
 
     # =====================================================================
     # STAGE 4: GROOVE
